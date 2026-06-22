@@ -1,0 +1,257 @@
+/* Student Dashboard Styles */
+
+/* Animation for real-time updates */
+@keyframes slideIn {
+    from {
+      opacity: 0;
+      transform: translateY(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+  
+  @keyframes bounce {
+    0%, 100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-5px);
+    }
+  }
+  
+  /* Student-specific styles */
+  .student-dashboard {
+    min-height: 100vh;
+  }
+  
+  /* Notification badge */
+  .notification-badge {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    animation: pulse 2s infinite;
+  }
+  
+  /* Loading skeleton */
+  .skeleton {
+    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background-size: 200% 100%;
+    animation: loading 1.5s infinite;
+  }
+  
+  @keyframes loading {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+  
+  /* Course card hover effect */
+  .course-card {
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+  }
+  
+  .course-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+  }
+  
+  .course-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.5s ease;
+  }
+  
+  .course-card:hover::before {
+    left: 100%;
+  }
+  
+  /* Assignment urgency colors */
+  .urgency-critical {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+  }
+  
+  .urgency-high {
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+  }
+  
+  .urgency-medium {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+  }
+  
+  .urgency-low {
+    background: linear-gradient(135deg, #10b981, #059669);
+  }
+  
+  /* Grade progress rings */
+  .grade-ring {
+    stroke-linecap: round;
+    transform: rotate(-90deg);
+    transform-origin: 50% 50%;
+  }
+  
+  .grade-ring-bg {
+    stroke: #e5e7eb;
+  }
+  
+  .grade-ring-progress {
+    stroke: currentColor;
+    transition: stroke-dashoffset 1s ease;
+  }
+  
+  /* Attendance calendar */
+  .calendar-day {
+    transition: all 0.2s ease;
+  }
+  
+  .calendar-day:hover {
+    transform: scale(1.05);
+  }
+  
+  .calendar-day.today {
+    box-shadow: 0 0 0 2px #10b981;
+  }
+  
+  /* Resource file icon animation */
+  .file-icon {
+    transition: all 0.3s ease;
+  }
+  
+  .file-icon:hover {
+    transform: scale(1.1) rotate(5deg);
+  }
+  
+  /* Profile picture upload */
+  .profile-upload {
+    position: relative;
+    overflow: hidden;
+    cursor: pointer;
+  }
+  
+  .profile-upload input[type="file"] {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+  }
+  
+  /* Notification item */
+  .notification-item {
+    animation: slideIn 0.3s ease;
+  }
+  
+  .notification-item.unread {
+    border-left: 4px solid #10b981;
+  }
+  
+  /* Analytics chart hover */
+  .chart-bar {
+    transition: all 0.3s ease;
+  }
+  
+  .chart-bar:hover {
+    opacity: 0.8;
+  }
+  
+  /* Mobile optimizations */
+  @media (max-width: 768px) {
+    .student-dashboard {
+      padding-bottom: 80px; /* Account for bottom navigation */
+    }
+    
+    .mobile-bottom-nav {
+      backdrop-filter: blur(10px);
+      background: rgba(255, 255, 255, 0.95);
+    }
+    
+    .stat-card {
+      padding: 1rem;
+    }
+  }
+  
+  /* Dark mode support */
+  @media (prefers-color-scheme: dark) {
+    .student-dashboard {
+      background: #0f172a;
+      color: #f8fafc;
+    }
+    
+    .course-card {
+      background: #1e293b;
+      border-color: #334155;
+    }
+    
+    .notification-item.unread {
+      background: #1e293b;
+    }
+  }
+  
+  /* Print styles */
+  @media print {
+    .student-dashboard {
+      background: white;
+      color: black;
+    }
+    
+    .no-print {
+      display: none !important;
+    }
+  }
+  
+  /* Accessibility */
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+  
+  /* Focus styles for keyboard navigation */
+  .focus-visible {
+    outline: 2px solid #10b981;
+    outline-offset: 2px;
+  }
+  
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  ::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    background: #a1a1a1;
+  }

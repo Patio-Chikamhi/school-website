@@ -1,0 +1,92 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    
+    function getStudentId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.studentId;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+             getUserRole() == 'admin';
+    }
+    
+    function isTeacher() {
+      return isAuthenticated() && 
+             getUserRole() == 'teacher';
+    }
+    
+    function isStudent() {
+      return isAuthenticated() && 
+             getUserRole() == 'student';
+    }
+    
+    // Public access for website assets
+    match /website/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    
+    // Assignment submissions - students can upload, teachers/admins can read
+    match /submissions/{studentId}/{assignmentId}/{fileName} {
+      allow read: if isAuthenticated() && (
+        isAdmin() ||
+        isTeacher() ||
+        (isStudent() && studentId == getStudentId())
+      );
+      allow write: if isStudent() && 
+                     studentId == getStudentId() &&
+                     request.resource.size < 10 * 1024 * 1024 && // 10MB limit
+                     request.resource.contentType.matches('(application/pdf|application/msword|application/vnd.openxmlformats-officedocument.*|text/.*|image/.*|video/.*)');
+      allow delete: if isAdmin() || isTeacher();
+    }
+    
+    // Course materials - teachers upload, students can read
+    match /course-materials/{courseId}/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || isTeacher();
+      allow delete: if isAdmin() || isTeacher();
+    }
+    
+    // Profile pictures
+    match /profile-pictures/{userId}/{fileName} {
+      allow read: if true;
+      allow write: if isAuthenticated() && userId == request.auth.uid;
+      allow delete: if isAuthenticated() && userId == request.auth.uid;
+    }
+    
+    // Gallery images
+    match /gallery/{fileName} {
+      allow read: if true;
+      allow write: if isAdmin() || isTeacher();
+      allow delete: if isAdmin() || isTeacher();
+    }
+    
+    // School documents
+    match /school-docs/{fileName} {
+      allow read: if true;
+      allow write: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    
+    // Temporary uploads
+    match /temp/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+      allow delete: if isAuthenticated();
+    }
+    
+    // Catch-all rule (deny everything else)
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

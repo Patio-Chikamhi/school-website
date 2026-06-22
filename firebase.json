@@ -1,0 +1,122 @@
+{
+  "hosting": {
+    "public": "build",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ],
+    "headers": [
+      {
+        "source": "**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          },
+          {
+            "key": "Pragma",
+            "value": "no-cache"
+          },
+          {
+            "key": "Expires",
+            "value": "0"
+          }
+        ]
+      },
+      {
+        "source": "**/*.@(html)",
+        "headers": [
+          {
+            "key": "X-Content-Type-Options",
+            "value": "nosniff"
+          },
+          {
+            "key": "X-Frame-Options",
+            "value": "DENY"
+          },
+          {
+            "key": "X-XSS-Protection",
+            "value": "1; mode=block"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          },
+          {
+            "key": "Pragma",
+            "value": "no-cache"
+          },
+          {
+            "key": "Expires",
+            "value": "0"
+          }
+        ]
+      },
+      {
+        "source": "**/*.@(js|css|mjs)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          },
+          {
+            "key": "Pragma",
+            "value": "no-cache"
+          },
+          {
+            "key": "Expires",
+            "value": "0"
+          }
+        ]
+      },
+      {
+        "source": "**/*.@(jpg|jpeg|png|gif|ico|svg|webp)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          },
+          {
+            "key": "Pragma",
+            "value": "no-cache"
+          },
+          {
+            "key": "Expires",
+            "value": "0"
+          }
+        ]
+      },
+      {
+        "source": "**/*.@(json|xml)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          },
+          {
+            "key": "Pragma",
+            "value": "no-cache"
+          },
+          {
+            "key": "Expires",
+            "value": "0"
+          }
+        ]
+      }
+    ]
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  }
+}
