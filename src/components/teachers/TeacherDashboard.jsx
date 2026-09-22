@@ -1,4 +1,4 @@
-// components/teachers/TeacherDashboard.jsx - COMPLETELY FIXED
+// components/teachers/TeacherDashboard.jsx - CLEANED
 import React, { useState, useEffect, useCallback } from 'react';
 import PostAssignmentModal from '../PostAssignmentModal';
 import InputGradesModal from '../InputGradesModal';
@@ -10,20 +10,15 @@ import TeacherStudents from './TeacherStudents';
 import TeacherAttendance from './TeacherAttendance';
 import TeacherGrades from './TeacherGrades';
 import { 
-  BookOpen, Award, Megaphone, Users, UserPlus, UserCheck, Filter,
-  Calendar, Clock, Bell, Home, ChevronRight, ChevronDown, Search,
-  BarChart, Download, Settings, Sparkles, GraduationCap, MessageSquare,
-  Eye, Edit, MoreVertical, CheckCircle, XCircle, AlertCircle,
-  TrendingUp, Bookmark, Star, Shield, Zap, Target, Briefcase,
-  FileText, CalendarDays, DownloadCloud, TrendingDown, UsersIcon,
-  BarChart3, PieChart, Activity, TargetIcon, Coffee, RefreshCw, Info,
-  Menu, LogOut, User, Bell as BellIcon, Upload, FileSpreadsheet
+  BookOpen, Users, Award, Bell, Home, Search, Upload,
+  GraduationCap, TrendingUp, User, BarChart3, UsersIcon,
+  Calendar, FileText
 } from 'lucide-react';
 import { db } from '../../firebase/config';
-import { collection, query, where, getDocs, orderBy, limit, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import TeacherMaterials from './TeacherMaterials';
 import TeacherReports from './TeacherReports';
-import TeacherTermReports from './TeacherTermReport';
+import TeacherTermReports from './TeacherTermReport';   // ✅ Fixed import path
 import TeacherAssignments from './TeacherAssignments';
 import PublishedReportsViewer from '../shared/PublishedReportsViewer';
 
@@ -31,31 +26,31 @@ import { Sidebar } from '../dashboard/Sidebar';
 import { TopHeader } from '../dashboard/TopHeader';
 import { StatsCard } from '../dashboard/StatsCard';
 import { LoadingState } from '../dashboard/LoadingState';
-import { EmptyState } from '../dashboard/EmptyState';
 
 const TeacherDashboard = ({ currentUser, courses, students }) => {
   const [activeModal, setActiveModal] = useState(null);
   const [enrolledCounts, setEnrolledCounts] = useState({});
   const [isLoading, setIsLoading] = useState(true);
-  const [expandedCourse, setExpandedCourse] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
-  const [recentActivity, setRecentActivity] = useState([]);
   const [performanceMetrics, setPerformanceMetrics] = useState(null);
   const [activeSection, setActiveSection] = useState('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [enrolledStudentsByCourse, setEnrolledStudentsByCourse] = useState({});
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
   const teacherName = currentUser?.name || currentUser?.email?.split('@')[0] || 'Teacher';
   const teacherId = currentUser?.uid;
-  
+
+  // ✅ DEBUG: Log section changes
+  useEffect(() => {
+    console.log('🔀 Active section changed to:', activeSection);
+  }, [activeSection]);
+
   // Filter courses for this teacher
   const teacherAssignedCourses = React.useMemo(() => {
     if (!courses || !teacherId) return [];
-    
-    console.log('🔍 Filtering courses for teacher ID:', teacherId);
-    console.log('📚 Total courses:', courses.length);
-    
+
     const assigned = courses.filter(course => {
       if (course.isActive === false) return false;
       if (course.teacherId === teacherId) return true;
@@ -64,16 +59,16 @@ const TeacherDashboard = ({ currentUser, courses, students }) => {
       }
       return false;
     });
-    
-    console.log(`📚 Found ${assigned.length} assigned courses:`, assigned.map(c => c.courseName));
+
+    console.log(`📚 Found ${assigned.length} assigned courses`);
     return assigned;
   }, [courses, teacherId]);
-  
+
   const filteredCourses = React.useMemo(() => {
     if (!teacherAssignedCourses.length) return [];
     let filtered = [...teacherAssignedCourses];
     if (searchQuery) {
-      filtered = filtered.filter(course => 
+      filtered = filtered.filter(course =>
         course.courseName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         course.courseId?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         course.grade?.toLowerCase().includes(searchQuery.toLowerCase())
@@ -81,12 +76,12 @@ const TeacherDashboard = ({ currentUser, courses, students }) => {
     }
     return filtered;
   }, [teacherAssignedCourses, searchQuery]);
-  
+
   const teacherCourses = React.useMemo(() => {
     if (filterStatus === 'all') return filteredCourses;
     return filteredCourses.filter(course => {
       const enrolled = enrolledCounts[course.id] || 0;
-      const capacity = course.capacity || 30;
+      const capacity = course.capacity || 45;
       const percentage = Math.round((enrolled / capacity) * 100);
       if (filterStatus === 'full' && percentage >= 90) return true;
       if (filterStatus === 'available' && percentage < 50) return true;
@@ -103,68 +98,96 @@ const TeacherDashboard = ({ currentUser, courses, students }) => {
       setIsLoading(false);
       return;
     }
-    
+
     let isMounted = true;
-    
+
     const fetchDashboardData = async () => {
       setIsLoading(true);
       const counts = {};
       const enrolledStudentsMap = {};
-      
+
       try {
-        for (const course of teacherAssignedCourses) {
-          if (!isMounted) break;
-          
-          try {
-            const enrollmentsQuery = query(
+        const courseIds = teacherAssignedCourses.map(c => c.id);
+
+        // Batch 1: Fetch enrollments
+        const enrollmentBatches = [];
+        for (let i = 0; i < courseIds.length; i += 30) {
+          const batch = courseIds.slice(i, i + 30);
+          enrollmentBatches.push(
+            getDocs(query(
               collection(db, 'enrollments'),
-              where('courseId', '==', course.id),
+              where('courseId', 'in', batch),
               where('status', '==', 'active')
-            );
-            const enrollmentsSnapshot = await getDocs(enrollmentsQuery);
-            counts[course.id] = enrollmentsSnapshot.size;
-            
-            const enrolledStudentsList = [];
-            for (const enrollmentDoc of enrollmentsSnapshot.docs) {
-              const enrollment = enrollmentDoc.data();
-              const studentQuery = query(
-                collection(db, 'students'),
-                where('studentId', '==', enrollment.studentId)
-              );
-              const studentSnapshot = await getDocs(studentQuery);
-              
-              if (!studentSnapshot.empty) {
-                enrolledStudentsList.push({
-                  id: studentSnapshot.docs[0].id,
-                  ...studentSnapshot.docs[0].data(),
-                  enrollmentId: enrollmentDoc.id,
-                  enrolledAt: enrollment.enrolledAt?.toDate?.() || new Date(),
-                  status: enrollment.status
-                });
-              } else {
-                enrolledStudentsList.push({
-                  studentId: enrollment.studentId,
-                  studentName: enrollment.studentName,
-                  fullName: enrollment.studentName,
-                  enrollmentId: enrollmentDoc.id,
-                  enrolledAt: enrollment.enrolledAt?.toDate?.() || new Date(),
-                  status: enrollment.status
-                });
-              }
-            }
-            enrolledStudentsMap[course.id] = enrolledStudentsList;
-            console.log(`📚 Course ${course.courseName}: ${enrollmentsSnapshot.size} students enrolled`);
-          } catch (error) {
-            console.error(`Error fetching data for course ${course.id}:`, error);
-            counts[course.id] = 0;
-            enrolledStudentsMap[course.id] = [];
-          }
+            ))
+          );
         }
-        
+        const enrollmentSnapshots = await Promise.all(enrollmentBatches);
+
+        const allEnrollments = [];
+        enrollmentSnapshots.forEach(snap => {
+          snap.forEach(doc => {
+            allEnrollments.push({ id: doc.id, ...doc.data() });
+          });
+        });
+
+        console.log(`📊 Fetched ${allEnrollments.length} enrollments`);
+
+        // Batch 2: Fetch students
+        const uniqueStudentIds = [...new Set(allEnrollments.map(e => e.studentId).filter(Boolean))];
+
+        const studentBatches = [];
+        for (let i = 0; i < uniqueStudentIds.length; i += 30) {
+          const batch = uniqueStudentIds.slice(i, i + 30);
+          studentBatches.push(
+            getDocs(query(
+              collection(db, 'students'),
+              where('studentId', 'in', batch)
+            ))
+          );
+        }
+        const studentSnapshots = await Promise.all(studentBatches);
+
+        const studentMap = {};
+        studentSnapshots.forEach(snap => {
+          snap.forEach(doc => {
+            const data = doc.data();
+            studentMap[data.studentId] = { id: doc.id, ...data };
+          });
+        });
+
+        console.log(`✅ Fetched ${Object.keys(studentMap).length} students`);
+
+        // Build map
+        for (const course of teacherAssignedCourses) {
+          const courseEnrollments = allEnrollments.filter(e => e.courseId === course.id);
+          counts[course.id] = courseEnrollments.length;
+
+          enrolledStudentsMap[course.id] = courseEnrollments.map(enrollment => {
+            const student = studentMap[enrollment.studentId];
+            if (student) {
+              return {
+                ...student,
+                enrollmentId: enrollment.id,
+                enrolledAt: enrollment.enrolledAt?.toDate?.() || new Date(),
+                status: enrollment.status
+              };
+            }
+            return {
+              studentId: enrollment.studentId,
+              studentName: enrollment.studentName,
+              fullName: enrollment.studentName,
+              enrollmentId: enrollment.id,
+              enrolledAt: enrollment.enrolledAt?.toDate?.() || new Date(),
+              status: enrollment.status
+            };
+          });
+        }
+
         if (!isMounted) return;
+
         setEnrolledCounts(counts);
         setEnrolledStudentsByCourse(enrolledStudentsMap);
-        
+
         const totalStudents = Object.values(counts).reduce((a, b) => a + b, 0);
         setPerformanceMetrics({
           totalAssignments: 0,
@@ -179,11 +202,11 @@ const TeacherDashboard = ({ currentUser, courses, students }) => {
         if (isMounted) setIsLoading(false);
       }
     };
-    
+
     const timer = setTimeout(() => {
       fetchDashboardData();
     }, 100);
-    
+
     return () => {
       isMounted = false;
       clearTimeout(timer);
@@ -204,11 +227,11 @@ const TeacherDashboard = ({ currentUser, courses, students }) => {
 
   const statistics = React.useMemo(() => {
     const totalStudents = Object.values(enrolledCounts).reduce((a, b) => a + b, 0);
-    const averageEnrollment = teacherAssignedCourses.length > 0 
+    const averageEnrollment = teacherAssignedCourses.length > 0
       ? Math.round(totalStudents / teacherAssignedCourses.length) : 0;
     const fullCourses = teacherAssignedCourses.filter(course => {
       const enrolled = enrolledCounts[course.id] || 0;
-      const capacity = course.capacity || 30;
+      const capacity = course.capacity || 45;
       return enrolled >= capacity * 0.9;
     }).length;
     return { totalStudents, averageEnrollment, fullCourses };
@@ -221,88 +244,96 @@ const TeacherDashboard = ({ currentUser, courses, students }) => {
   const handleNotificationsClick = () => console.log('Notifications clicked');
   const handleSettingsClick = () => setActiveSection('settings');
 
+  // ============================================
+  // RENDER MAIN CONTENT
+  // ============================================
   const renderMainContent = () => {
-    if (activeSection !== 'dashboard') {
-      switch (activeSection) {
-        case 'courses':
-          return (
-            <TeacherCourses 
-              teacherId={teacherId}
-              teacherCourses={teacherCourses}
-              enrolledStudentsByCourse={enrolledStudentsByCourse}
-              onEnrollStudents={(course) => openModal('enroll')}
-              onEditCourse={(course) => console.log('Edit course:', course.courseName)}
-            />
-          );
-        case 'students':
-          return (
-            <TeacherStudents 
-              teacherId={teacherId}
-              teacherCourses={teacherCourses}
-              enrolledStudentsByCourse={enrolledStudentsByCourse}
-              students={students}
-            />
-          );
-        case 'attendance':
-          return (
-            <TeacherAttendance 
-              teacherId={teacherId}
-              teacherCourses={teacherCourses}
-              enrolledStudentsByCourse={enrolledStudentsByCourse}
-            />
-          );
-        case 'grades':
-          return (
-            <TeacherGrades 
-              teacherId={teacherId}
-              teacherCourses={teacherCourses}
-              enrolledStudentsByCourse={enrolledStudentsByCourse}
-            />
-          );
-        case 'materials':
-          return (
-            <TeacherMaterials 
-              teacherId={teacherId} 
-              teacherCourses={teacherCourses} 
-              enrolledStudentsByCourse={enrolledStudentsByCourse}
-            />
-          );
-        case 'studentReports':
-          return (
-            <TeacherReports 
-              teacherId={teacherId} 
-              teacherCourses={teacherCourses} 
-              enrolledStudentsByCourse={enrolledStudentsByCourse}
-            />
-          );
-        case 'termReports':  // New case
-      return (
-        <TeacherTermReports 
-          teacherId={teacherId} 
-          teacherCourses={teacherCourses} 
-          enrolledStudentsByCourse={enrolledStudentsByCourse}
-        />
-      ); 
-      case 'publishedReports':
-  return (
-    <PublishedReportsViewer 
-      userType="teacher"
-      teacherId={teacherId}
-    />
-  );
-      case 'assignments':
-        return (
-       <TeacherAssignments 
-         teacherId={teacherId}
-         teacherCourses={teacherCourses}
-         enrolledStudentsByCourse={enrolledStudentsByCourse}
-       />
-      );
-        default:
-          return renderDashboardOverview();
-      }
+    if (activeSection === 'dashboard') {
+      return renderDashboardOverview();
     }
-    return renderDashboardOverview();
+
+    // Keep tabs mounted; toggle visibility with CSS
+    const renderTab = (tabId, component) => (
+      <div
+        style={{ display: activeSection === tabId ? 'block' : 'none' }}
+        key={tabId}
+      >
+        {component}
+      </div>
+    );
+
+    return (
+      <>
+        {renderTab('courses',
+          <TeacherCourses
+            teacherId={teacherId}
+            teacherCourses={teacherCourses}
+            enrolledStudentsByCourse={enrolledStudentsByCourse}
+            onEnrollStudents={(course) => openModal('enroll')}
+            onEditCourse={(course) => console.log('Edit course:', course.courseName)}
+          />
+        )}
+        {renderTab('students',
+          <TeacherStudents
+            teacherId={teacherId}
+            teacherCourses={teacherCourses}
+            enrolledStudentsByCourse={enrolledStudentsByCourse}
+            students={students}
+          />
+        )}
+        {renderTab('attendance',
+          <TeacherAttendance
+            teacherId={teacherId}
+            teacherCourses={teacherCourses}
+            enrolledStudentsByCourse={enrolledStudentsByCourse}
+          />
+        )}
+        {renderTab('grades',
+          <TeacherGrades
+            teacherId={teacherId}
+            teacherCourses={teacherCourses}
+            enrolledStudentsByCourse={enrolledStudentsByCourse}
+          />
+        )}
+        {renderTab('materials',
+          <TeacherMaterials
+            teacherId={teacherId}
+            teacherCourses={teacherCourses}
+            enrolledStudentsByCourse={enrolledStudentsByCourse}
+          />
+        )}
+        {/* ✅ Single Subject Report (TeacherReports.jsx) */}
+        {renderTab('studentReports',
+          <TeacherReports
+            teacherId={teacherId}
+            teacherCourses={teacherCourses}
+            enrolledStudentsByCourse={enrolledStudentsByCourse}
+          />
+        )}
+        {/* ✅ Term Reports (TeacherTermReports.jsx) */}
+        {renderTab('termReports',
+          <TeacherTermReports
+            teacherId={teacherId}
+            teacherCourses={teacherCourses}
+            enrolledStudentsByCourse={enrolledStudentsByCourse}
+          />
+        )}
+        {/* ✅ All Published Reports */}
+        {renderTab('publishedReports',
+          <PublishedReportsViewer
+            userType="teacher"
+            teacherId={teacherId}
+          />
+        )}
+        {renderTab('assignments',
+          <TeacherAssignments
+            teacherId={teacherId}
+            teacherCourses={teacherCourses}
+            enrolledStudentsByCourse={enrolledStudentsByCourse}
+          />
+        )}
+      </>
+    );
   };
 
   const renderDashboardOverview = () => {
@@ -373,7 +404,7 @@ const TeacherDashboard = ({ currentUser, courses, students }) => {
               { label: 'Grading', value: `${safeNumber(performanceMetrics?.pendingGrading)}` },
               { label: 'Attendance', value: '2' }
             ]}
-            onClick={() => setActiveModal('grades')}
+            onClick={() => setActiveSection('grades')}
           />
           <StatsCard
             title="Performance"
@@ -385,7 +416,6 @@ const TeacherDashboard = ({ currentUser, courses, students }) => {
               { label: 'Completion Rate', value: `${safeNumber(performanceMetrics?.completionRate)}%` },
               { label: 'Trend', value: 'Improving' }
             ]}
-            onClick={() => setActiveSection('analytics')}
           />
         </div>
 
@@ -400,58 +430,46 @@ const TeacherDashboard = ({ currentUser, courses, students }) => {
     );
   };
 
-  // Sidebar sections - UPDATED with ALL sections
-  const sidebarSections = [
-    { id: 'dashboard', label: 'Dashboard', icon: <BarChart3 className="w-5 h-5" /> },
-    { id: 'courses', label: 'My Courses', icon: <BookOpen className="w-5 h-5" /> },
-    { id: 'students', label: 'Students', icon: <UsersIcon className="w-5 h-5" /> },
-    { id: 'attendance', label: 'Attendance', icon: <Calendar className="w-5 h-5" /> },
-    { id: 'grades', label: 'Grades', icon: <Award className="w-5 h-5" /> },
-    { id: 'materials', label: 'Course Materials', icon: <Upload className="w-5 h-5" /> },
-    { id: 'reports', label: 'Student Reports', icon: <FileText className="w-5 h-5" /> },
-  ];
-
-  // Mobile bottom navigation - UPDATED
   const mobileNavItems = [
     { id: 'dashboard', icon: Home, label: 'Home' },
     { id: 'courses', icon: BookOpen, label: 'Courses' },
     { id: 'students', icon: Users, label: 'Students' },
     { id: 'materials', icon: Upload, label: 'Materials' },
-    { id: 'profile', icon: User, label: 'Profile' },
+    { id: 'publishedReports', icon: FileText, label: 'Reports' },
   ];
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
       <Sidebar
-  activeSection={activeSection}
-  onSectionChange={setActiveSection}
-  userType="teacher"
-  userName={teacherName}
-  userRole="Teacher"
-  collapsed={sidebarCollapsed}
-  onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
-  isMobileOpen={isMobileMenuOpen}
-  onMobileClose={() => setIsMobileMenuOpen(false)}
-/>
-      
-      <TopHeader
-  title="Teacher Portal"
-  subtitle="Welcome"
-  userName={teacherName}
-  onSearch={handleSearch}
-  onNotificationsClick={handleNotificationsClick}
-  onSettingsClick={handleSettingsClick}
-  onMobileMenuToggle={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-  isMobileMenuOpen={isMobileMenuOpen}
-/>
+        activeSection={activeSection}
+        onSectionChange={setActiveSection}
+        userType="teacher"
+        userName={teacherName}
+        userRole="Teacher"
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+        isMobileOpen={isMobileMenuOpen}
+        onMobileClose={() => setIsMobileMenuOpen(false)}
+      />
 
-      <main className={`transition-all duration-300 ${sidebarCollapsed ? 'lg:ml-20' : 'lg:ml-64'} px-6 py-8`}>
+      <TopHeader
+        title="Teacher Portal"
+        subtitle="Welcome"
+        userName={teacherName}
+        onSearch={handleSearch}
+        onNotificationsClick={handleNotificationsClick}
+        onSettingsClick={handleSettingsClick}
+        onMobileMenuToggle={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+        isMobileMenuOpen={isMobileMenuOpen}
+      />
+
+      <main className={`transition-all duration-300 ${sidebarCollapsed ? 'lg:ml-20' : 'lg:ml-64'} px-4 sm:px-6 py-6 sm:py-8 pb-24 lg:pb-8`}>
         <div className="lg:hidden h-16"></div>
         {renderMainContent()}
       </main>
 
-      {/* Mobile Bottom Navigation - FIXED */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 lg:hidden z-50">
+      {/* Mobile Bottom Navigation */}
+       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 lg:hidden z-40">
         <div className="flex justify-around items-center h-16">
           {mobileNavItems.map((tab) => (
             <button

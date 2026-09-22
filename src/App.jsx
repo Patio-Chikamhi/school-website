@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   BookOpen, 
   Calculator, 
@@ -148,6 +148,10 @@ const Footer = () => (
           <p className="text-gray-400 text-sm">1400 Pine Street, City, State 12345</p>
           <p className="text-gray-400 text-sm">© {new Date().getFullYear()} Evergreen Academy. All rights reserved.</p>
         </div>
+
+        <div>
+          <p className="text-gray-400 text-sm">Designed By eclectictech.co.zw</p>
+        </div>
         <div className="mt-8 md:mt-0">
           <h3 className="text-sm font-semibold text-white tracking-wider uppercase mb-4 text-center md:text-left">Quick Links</h3>
           <ul className="text-center md:text-left space-y-2">
@@ -222,9 +226,18 @@ const getDashboardPath = (role) => {
 const App = () => {
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [authResolved, setAuthResolved] = useState(false);
   const [forceChangePassword, setForceChangePassword] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+
+  // ✅ useRef to hold navigate — keeps the auth effect from re-running on navigation
+  const navigateRef = useRef(navigate);
+
+  // Keep the ref in sync without triggering the auth effect
+  useEffect(() => {
+    navigateRef.current = navigate;
+  }, [navigate]);
 
   // State for collections
   const [announcements, setAnnouncements] = useState([]);
@@ -270,399 +283,432 @@ const App = () => {
     }
   }, [db, currentUser]);
 
-  // 1. FIREBASE INITIALIZATION - UPDATED WITH FIXES
+  // ============================================
+  // 1. FIREBASE AUTH INITIALIZATION
+  //    ⚠️ Only depends on [db, auth] — navigate is accessed via navigateRef
+  // ============================================
   useEffect(() => {
-  console.log('Using Firebase from config file...');
+    console.log('Using Firebase from config file...');
 
-  if (!db || !auth) {
-    console.log('Waiting for Firebase initialization...');
-    setLoading(false);
-    return;
-  }
-
-  console.log('Firebase ready from config');
-
-  const unsubscribe = onAuthStateChanged(auth, async (user) => {
-    // ✅ CRITICAL: Check if admin is creating a user - skip auth redirect
-    if (sessionStorage.getItem('adminCreatingUser') === 'true') {
-      console.log("👤 Admin is creating a user - skipping auth redirect");
+    if (!db || !auth) {
+      console.log('Waiting for Firebase initialization...');
       setLoading(false);
+      setAuthResolved(true);
       return;
     }
 
-    if (user) {
-      console.log("User authenticated:", user.uid, user.email);
+    console.log('Firebase ready from config');
 
-      try {
-        const userDocRef = doc(db, 'users', user.uid);
-        const userDoc = await getDoc(userDocRef);
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      // ✅ Admin creating a user — skip auth redirect
+      if (sessionStorage.getItem('adminCreatingUser') === 'true') {
+        console.log("👤 Admin is creating a user - skipping auth redirect");
+        setLoading(false);
+        setAuthResolved(true);
+        return;
+      }
 
-        console.log("📄 User document exists:", userDoc.exists());
+      if (user) {
+        console.log("User authenticated:", user.uid, user.email);
 
-        if (userDoc.exists()) {
-          const userData = userDoc.data();
-          console.log("✅ Existing user data loaded:", userData);
-          const mustChangePwd = userData.mustChangePassword === true;
-          const userRole = userData.role;
+        try {
+          const userDocRef = doc(db, 'users', user.uid);
+          const userDoc = await getDoc(userDocRef);
 
-          setCurrentUser({
-            uid: user.uid,
-            ...userData,
-            email: userData.email || user.email,
-            name: userData.name || user.displayName || user.email?.split('@')[0],
-            mustChangePassword: mustChangePwd
-          });
+          console.log("📄 User document exists:", userDoc.exists());
 
-          // ✅ Only redirect non-admin users who must change password
-          if (mustChangePwd === true && 
-              userRole !== 'admin' && 
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            console.log("✅ Existing user data loaded:", userData);
+            const mustChangePwd = userData.mustChangePassword === true;
+            const userRole = userData.role;
+
+            setCurrentUser({
+              uid: user.uid,
+              ...userData,
+              email: userData.email || user.email,
+              name: userData.name || user.displayName || user.email?.split('@')[0],
+              mustChangePassword: mustChangePwd
+            });
+
+            // Only redirect non-admin users who must change password
+            if (
+              mustChangePwd === true &&
+              userRole !== 'admin' &&
               userRole !== 'parent' &&
               !window.location.pathname.includes('/force-change-password') &&
-              !window.location.pathname.includes('/admin')) {
-            console.log("🔒 Non-admin user must change password - redirecting");
-            setForceChangePassword(true);
-            navigate('/force-change-password');
-          }
-        } else {
-          console.log("🆕 New user - checking signup type...");
-
-          const signupType = localStorage.getItem('signupType');
-          const pendingTeacherEmail = localStorage.getItem('pendingTeacherEmail');
-          
-          let role = 'user';
-          let status = 'active';
-          let mustChangePassword = false;
-
-          // Check if this is a new user created by admin (parent/student account)
-          const isAdminCreated = sessionStorage.getItem('adminCreatingUser');
-          
-          // ✅ PRIORITY 1: User created by admin
-          if (isAdminCreated === 'true') {
-            console.log("👤 User created by admin - setting appropriate role without redirect");
-            if (user.email.includes('_parent@') || user.email.includes('@parent.')) {
-              role = 'parent';
-            } else {
-              role = 'student';
+              !window.location.pathname.includes('/admin')
+            ) {
+              console.log("🔒 Non-admin user must change password - redirecting");
+              setForceChangePassword(true);
+              navigateRef.current('/force-change-password');
             }
-            status = 'active';
-            mustChangePassword = true;
-          }
-          // ✅ PRIORITY 2: Teacher signup from localStorage
-          else if (signupType === 'teacher' || (pendingTeacherEmail && user.email === pendingTeacherEmail)) {
-            role = 'teacher';
-            status = 'pending';
-            mustChangePassword = true;
-            console.log("🎯 TEACHER SIGNUP DETECTED");
-            localStorage.removeItem('signupType');
-            localStorage.removeItem('pendingTeacherEmail');
-          } 
-          // ✅ PRIORITY 3: Parent signup
-          else if (signupType === 'parent') {
-            role = 'parent';
-            status = 'pending';
-            mustChangePassword = true;
-            console.log("🎯 PARENT SIGNUP DETECTED");
-            localStorage.removeItem('signupType');
-          } 
-          // ✅ PRIORITY 4: Admin email
-          else if (user.email === 'admin@school.edu') {
-            role = 'admin';
-            status = 'active';
-            mustChangePassword = false;
-            console.log("🎯 ADMIN USER DETECTED");
-          }
-          // ✅ PRIORITY 5: Check if teacher document exists (to prevent overwriting)
-          else {
-            // Check if a teacher document exists for this user
-            try {
-              const teacherDoc = await getDoc(doc(db, 'teachers', user.uid));
-              if (teacherDoc.exists()) {
-                role = 'teacher';
-                status = teacherDoc.data().status || 'pending';
-                mustChangePassword = false;
-                console.log("🎯 EXISTING TEACHER DETECTED - setting role: teacher");
+          } else {
+            console.log("🆕 New user - checking signup type...");
+
+            const signupType = localStorage.getItem('signupType');
+            const pendingTeacherEmail = localStorage.getItem('pendingTeacherEmail');
+
+            let role = 'user';
+            let status = 'active';
+            let mustChangePassword = false;
+
+            const isAdminCreated = sessionStorage.getItem('adminCreatingUser');
+
+            // PRIORITY 1: User created by admin
+            if (isAdminCreated === 'true') {
+              console.log("👤 User created by admin - setting appropriate role without redirect");
+              if (user.email.includes('_parent@') || user.email.includes('@parent.')) {
+                role = 'parent';
               } else {
-                // Also check teachers collection by userId field
-                const teachersQuery = query(
-                  collection(db, 'teachers'),
-                  where('userId', '==', user.uid)
-                );
-                const teachersSnapshot = await getDocs(teachersQuery);
-                if (!teachersSnapshot.empty) {
-                  role = 'teacher';
-                  status = teachersSnapshot.docs[0].data().status || 'pending';
-                  mustChangePassword = false;
-                  console.log("🎯 EXISTING TEACHER DETECTED (by userId) - setting role: teacher");
-                } else {
-                  role = 'student';
-                  status = 'active';
-                  mustChangePassword = true;
-                  console.log("🎯 STUDENT SIGNUP (default)");
-                }
+                role = 'student';
               }
-            } catch (teacherCheckError) {
-              console.warn("Error checking teacher document:", teacherCheckError);
-              role = 'student';
               status = 'active';
               mustChangePassword = true;
             }
+            // PRIORITY 2: Teacher signup
+            else if (signupType === 'teacher' || (pendingTeacherEmail && user.email === pendingTeacherEmail)) {
+              role = 'teacher';
+              status = 'pending';
+              mustChangePassword = true;
+              console.log("🎯 TEACHER SIGNUP DETECTED");
+              localStorage.removeItem('signupType');
+              localStorage.removeItem('pendingTeacherEmail');
+            }
+            // PRIORITY 3: Parent signup
+            else if (signupType === 'parent') {
+              role = 'parent';
+              status = 'pending';
+              mustChangePassword = true;
+              console.log("🎯 PARENT SIGNUP DETECTED");
+              localStorage.removeItem('signupType');
+            }
+            // PRIORITY 4: Admin email
+            else if (user.email === 'admin@school.edu') {
+              role = 'admin';
+              status = 'active';
+              mustChangePassword = false;
+              console.log("🎯 ADMIN USER DETECTED");
+            }
+            // PRIORITY 5: Check if teacher document exists
+            else {
+              try {
+                const teacherDoc = await getDoc(doc(db, 'teachers', user.uid));
+                if (teacherDoc.exists()) {
+                  role = 'teacher';
+                  status = teacherDoc.data().status || 'pending';
+                  mustChangePassword = false;
+                  console.log("🎯 EXISTING TEACHER DETECTED - setting role: teacher");
+                } else {
+                  const teachersQuery = query(
+                    collection(db, 'teachers'),
+                    where('userId', '==', user.uid)
+                  );
+                  const teachersSnapshot = await getDocs(teachersQuery);
+                  if (!teachersSnapshot.empty) {
+                    role = 'teacher';
+                    status = teachersSnapshot.docs[0].data().status || 'pending';
+                    mustChangePassword = false;
+                    console.log("🎯 EXISTING TEACHER DETECTED (by userId) - setting role: teacher");
+                  } else {
+                    role = 'student';
+                    status = 'active';
+                    mustChangePassword = true;
+                    console.log("🎯 STUDENT SIGNUP (default)");
+                  }
+                }
+              } catch (teacherCheckError) {
+                console.warn("Error checking teacher document:", teacherCheckError);
+                role = 'student';
+                status = 'active';
+                mustChangePassword = true;
+              }
+            }
+
+            console.log(`🆕 Creating user document with role: ${role}, mustChangePassword: ${mustChangePassword}`);
+
+            const newUserData = {
+              uid: user.uid,
+              email: user.email,
+              name: user.displayName || user.email?.split('@')[0],
+              role: role,
+              status: status,
+              mustChangePassword: mustChangePassword,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
+            };
+
+            if (role === 'student') {
+              newUserData.studentId = `STU${Date.now().toString().slice(-6)}`;
+              newUserData.grade = '';
+              newUserData.section = '';
+            } else if (role === 'teacher') {
+              newUserData.teacherId = `TCH${Date.now().toString().slice(-6)}`;
+              newUserData.department = '';
+            } else if (role === 'parent') {
+              newUserData.parentId = `PAR${Date.now().toString().slice(-6)}`;
+              newUserData.childrenIds = [];
+            }
+
+            await setDoc(userDocRef, newUserData);
+            console.log(`✅ Created user document with role: ${role}`);
+
+            if (isAdminCreated !== 'true') {
+              setCurrentUser({ uid: user.uid, ...newUserData });
+            }
+
+            if (mustChangePassword === true && role !== 'admin' && isAdminCreated !== 'true') {
+              console.log("🔒 Redirecting to force change password");
+              setForceChangePassword(true);
+              navigateRef.current('/force-change-password');
+            }
           }
-
-          console.log(`🆕 Creating user document with role: ${role}, mustChangePassword: ${mustChangePassword}`);
-
-          const newUserData = {
-            uid: user.uid,
-            email: user.email,
-            name: user.displayName || user.email?.split('@')[0],
-            role: role,
-            status: status,
-            mustChangePassword: mustChangePassword,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
-          };
-
-          // Only add role-specific fields for students (teachers don't need studentId)
-          if (role === 'student') {
-            newUserData.studentId = `STU${Date.now().toString().slice(-6)}`;
-            newUserData.grade = '';
-            newUserData.section = '';
-          } else if (role === 'teacher') {
-            newUserData.teacherId = `TCH${Date.now().toString().slice(-6)}`;
-            newUserData.department = '';
-          } else if (role === 'parent') {
-            newUserData.parentId = `PAR${Date.now().toString().slice(-6)}`;
-            newUserData.childrenIds = [];
-          }
-
-          await setDoc(userDocRef, newUserData);
-          console.log(`✅ Created user document with role: ${role}`);
-          
-          // Only update currentUser if this is not an admin-created user
-          if (isAdminCreated !== 'true') {
-            setCurrentUser({ uid: user.uid, ...newUserData });
-          }
-
-          // Only redirect for non-admin, non-admin-created users
-          if (mustChangePassword === true && role !== 'admin' && isAdminCreated !== 'true') {
-            console.log("🔒 Redirecting to force change password");
-            setForceChangePassword(true);
-            navigate('/force-change-password');
+        } catch (error) {
+          console.error("❌ Error handling user data:", error);
+          if (sessionStorage.getItem('adminCreatingUser') !== 'true') {
+            setCurrentUser({
+              uid: user.uid,
+              email: user.email,
+              name: user.displayName || user.email?.split('@')[0],
+              role: 'user',
+              status: 'error',
+              mustChangePassword: false
+            });
           }
         }
-      } catch (error) {
-        console.error("❌ Error handling user data:", error);
+      } else {
+        // User logged out
         if (sessionStorage.getItem('adminCreatingUser') !== 'true') {
-          setCurrentUser({
-            uid: user.uid,
-            email: user.email,
-            name: user.displayName || user.email?.split('@')[0],
-            role: 'user',
-            status: 'error',
-            mustChangePassword: false
-          });
+          setCurrentUser(null);
+          setForceChangePassword(false);
+          console.log("👤 User logged out");
         }
       }
-    } else {
-      // Only clear currentUser if not in admin creation mode
-      if (sessionStorage.getItem('adminCreatingUser') !== 'true') {
-        setCurrentUser(null);
-        setForceChangePassword(false);
-        console.log("👤 User logged out");
-      }
-    }
-    setLoading(false);
-  });
 
-  return () => unsubscribe();
-}, [db, auth, navigate]);
+      // ✅ Auth has been fully resolved — allow the app to render
+      setLoading(false);
+      setAuthResolved(true);
+    });
+
+    return () => unsubscribe();
+  }, [db, auth]); // ✅ navigate is intentionally NOT a dependency
 
   // ============================================
   // DATA FETCHING EFFECTS
   // ============================================
 
   // 2. Fetch Applications
-  useEffect(() => {
-    if (!db) return;
+useEffect(() => {
+  if (!db) return;
+  
+  // ✅ Don't start listener until user is authenticated
+  if (!auth.currentUser) {
+    setApplicationsLoading(false);
+    return;
+  }
 
-    console.log('📋 Fetching applications...');
+  console.log('📋 Fetching applications...');
 
-    const applicationsCollectionRef = collection(db, 'applications');
-    const applicationsQuery = query(applicationsCollectionRef, orderBy('appliedAt', 'desc'));
+  const applicationsCollectionRef = collection(db, 'applications');
+  const applicationsQuery = query(applicationsCollectionRef, orderBy('appliedAt', 'desc'));
 
-    setApplicationsLoading(true);
+  setApplicationsLoading(true);
 
-    const unsubscribeApplications = onSnapshot(applicationsQuery,
-      (snapshot) => {
-        console.log('✅ Applications snapshot received:', snapshot.size);
-        const fetchedApplications = snapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            ...data,
-            appliedAt: data.appliedAt?.toDate ? data.appliedAt.toDate() : new Date(data.appliedAt || Date.now()),
-            createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt || Date.now()),
-            updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : new Date(data.updatedAt || Date.now())
-          };
-        });
-        setApplications(fetchedApplications);
-        setApplicationsLoading(false);
-        setApplicationsError(null);
-      },
-      (error) => {
-        console.error("❌ Error fetching applications:", error);
-        setApplicationsError("Failed to fetch applications.");
-        setApplicationsLoading(false);
-        setApplications([]);
-      }
-    );
+  const unsubscribeApplications = onSnapshot(applicationsQuery,
+    (snapshot) => {
+      console.log('✅ Applications snapshot received:', snapshot.size);
+      const fetchedApplications = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          appliedAt: data.appliedAt?.toDate ? data.appliedAt.toDate() : new Date(data.appliedAt || Date.now()),
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt || Date.now()),
+          updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : new Date(data.updatedAt || Date.now())
+        };
+      });
+      setApplications(fetchedApplications);
+      setApplicationsLoading(false);
+      setApplicationsError(null);
+    },
+    (error) => {
+      console.error("❌ Error fetching applications:", error);
+      setApplicationsError("Failed to fetch applications.");
+      setApplicationsLoading(false);
+      setApplications([]);
+    }
+  );
 
-    return () => unsubscribeApplications();
-  }, [db]);
+  return () => unsubscribeApplications();
+}, [db, currentUser?.uid]);   // ✅ Re-run on auth change
 
   // 3. Fetch Events
-  useEffect(() => {
-    if (!db) return;
+useEffect(() => {
+  if (!db) return;
+  
+  if (!auth.currentUser) {
+    setEventsLoading(false);
+    return;
+  }
 
-    const eventsCollectionRef = collection(db, 'events');
-    const eventsQuery = query(
-      eventsCollectionRef,
-      where('isActive', '==', true),
-      orderBy('eventDate', 'asc')
-    );
+  const eventsCollectionRef = collection(db, 'events');
+  const eventsQuery = query(
+    eventsCollectionRef,
+    where('isActive', '==', true),
+    orderBy('eventDate', 'asc')
+  );
 
-    setEventsLoading(true);
+  setEventsLoading(true);
 
-    const unsubscribeEvents = onSnapshot(eventsQuery,
-      (snapshot) => {
-        const fetchedEvents = snapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            ...data,
-            eventDate: data.eventDate?.toDate ? data.eventDate.toDate() : new Date(data.eventDate || Date.now()),
-            endDate: data.endDate?.toDate ? data.endDate.toDate() : new Date(data.endDate || Date.now()),
-          };
-        });
-        setEvents(fetchedEvents);
-        setEventsLoading(false);
-        setEventsError(null);
-      },
-      (error) => {
-        console.error("Error fetching events:", error);
-        setEventsError("Failed to fetch events.");
-        setEventsLoading(false);
-        setEvents([]);
-      }
-    );
+  const unsubscribeEvents = onSnapshot(eventsQuery,
+    (snapshot) => {
+      const fetchedEvents = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          eventDate: data.eventDate?.toDate ? data.eventDate.toDate() : new Date(data.eventDate || Date.now()),
+          endDate: data.endDate?.toDate ? data.endDate.toDate() : new Date(data.endDate || Date.now()),
+        };
+      });
+      setEvents(fetchedEvents);
+      setEventsLoading(false);
+      setEventsError(null);
+    },
+    (error) => {
+      console.error("Error fetching events:", error);
+      setEventsError("Failed to fetch events.");
+      setEventsLoading(false);
+      setEvents([]);
+    }
+  );
 
-    return () => unsubscribeEvents();
-  }, [db]);
+  return () => unsubscribeEvents();
+}, [db, currentUser?.uid]);   // ✅ Re-run on auth change
 
   // 4. FETCH STUDENTS
-  useEffect(() => {
-    if (!db) return;
+useEffect(() => {
+  if (!db) return;
+  
+  if (!auth.currentUser) {
+    setStudentsLoading(false);
+    return;
+  }
 
-    console.log('👥 Fetching students from Firestore...');
+  console.log('👥 Fetching students from Firestore...');
 
-    const studentsCollectionRef = collection(db, 'students');
-    const studentsQuery = query(
-      studentsCollectionRef,
-      orderBy('fullName', 'asc')
-    );
+  const studentsCollectionRef = collection(db, 'students');
+  setStudentsLoading(true);
 
-    setStudentsLoading(true);
+  const unsubscribeStudents = onSnapshot(studentsCollectionRef,
+    (snapshot) => {
+      const fetchedStudents = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
 
-    const unsubscribeStudents = onSnapshot(studentsQuery,
-      (snapshot) => {
-        const fetchedStudents = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        console.log(`✅ Students fetched: ${fetchedStudents.length}`);
-        setStudents(fetchedStudents);
-        setStudentsLoading(false);
-        setStudentsError(null);
-      },
-      (error) => {
-        console.error("Error fetching students:", error);
-        setStudentsError("Failed to fetch students.");
-        setStudentsLoading(false);
-        setStudents([]);
-      }
-    );
+      fetchedStudents.sort((a, b) => {
+        const nameA = (a.fullName || a.name || '').toLowerCase();
+        const nameB = (b.fullName || b.name || '').toLowerCase();
+        return nameA.localeCompare(nameB);
+      });
 
-    return () => unsubscribeStudents();
-  }, [db]);
+      console.log(`✅ Students fetched: ${fetchedStudents.length}`);
+      setStudents(fetchedStudents);
+      setStudentsLoading(false);
+      setStudentsError(null);
+    },
+    (error) => {
+      console.error("❌ Error fetching students:", error);
+      setStudentsError("Failed to fetch students: " + error.message);
+      setStudentsLoading(false);
+      setStudents([]);
+    }
+  );
 
-  // 5. FETCH COURSES - CRITICAL FOR TEACHER DASHBOARD
-  useEffect(() => {
-    if (!db) return;
+  return () => unsubscribeStudents();
+}, [db, currentUser?.uid]);   // ✅ Re-run on auth change
 
-    console.log('📚 Fetching courses from Firestore...');
+  // 5. FETCH COURSES
+useEffect(() => {
+  if (!db) return;
+  
+  if (!auth.currentUser) {
+    setCoursesLoading(false);
+    return;
+  }
 
-    const coursesCollectionRef = collection(db, 'courses');
-    const coursesQuery = query(
-      coursesCollectionRef,
-      orderBy('courseName', 'asc')
-    );
+  console.log('📚 Fetching courses from Firestore...');
 
-    setCoursesLoading(true);
+  const coursesCollectionRef = collection(db, 'courses');
+  setCoursesLoading(true);
 
-    const unsubscribeCourses = onSnapshot(coursesQuery,
-      (snapshot) => {
-        const fetchedCourses = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        console.log(`✅ Courses fetched: ${fetchedCourses.length}`);
-        setCourses(fetchedCourses);
-        setCoursesLoading(false);
-        setCoursesError(null);
-      },
-      (error) => {
-        console.error("Error fetching courses:", error);
-        setCoursesError("Failed to fetch courses.");
-        setCoursesLoading(false);
-        setCourses([]);
-      }
-    );
+  const unsubscribeCourses = onSnapshot(coursesCollectionRef,
+    (snapshot) => {
+      const fetchedCourses = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
 
-    return () => unsubscribeCourses();
-  }, [db]);
+      fetchedCourses.sort((a, b) => {
+        const nameA = (a.courseName || '').toLowerCase();
+        const nameB = (b.courseName || '').toLowerCase();
+        return nameA.localeCompare(nameB);
+      });
+
+      console.log(`✅ Courses fetched: ${fetchedCourses.length}`);
+      setCourses(fetchedCourses);
+      setCoursesLoading(false);
+      setCoursesError(null);
+    },
+    (error) => {
+      console.error("❌ Error fetching courses:", error);
+      setCoursesError("Failed to fetch courses: " + error.message);
+      setCoursesLoading(false);
+      setCourses([]);
+    }
+  );
+
+  return () => unsubscribeCourses();
+}, [db, currentUser?.uid]);   // ✅ Re-run on auth change
 
   // 6. Fetch Gallery
-  useEffect(() => {
-    if (!db) return;
+useEffect(() => {
+  if (!db) return;
+  
+  if (!auth.currentUser) {
+    setGalleryLoading(false);
+    return;
+  }
 
-    const galleryCollectionRef = collection(db, 'gallery');
+  const galleryCollectionRef = collection(db, 'gallery');
+  setGalleryLoading(true);
 
-    setGalleryLoading(true);
+  const unsubscribeGallery = onSnapshot(galleryCollectionRef,
+    (snapshot) => {
+      const fetchedGallery = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      setGalleryItems(fetchedGallery);
+      setGalleryLoading(false);
+      setGalleryError(null);
+    },
+    (error) => {
+      console.error("Error fetching gallery:", error);
+      setGalleryError("Failed to fetch gallery images.");
+      setGalleryLoading(false);
+      setGalleryItems([]);
+    }
+  );
 
-    const unsubscribeGallery = onSnapshot(galleryCollectionRef,
-      (snapshot) => {
-        const fetchedGallery = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        setGalleryItems(fetchedGallery);
-        setGalleryLoading(false);
-        setGalleryError(null);
-      },
-      (error) => {
-        console.error("Error fetching gallery:", error);
-        setGalleryError("Failed to fetch gallery images.");
-        setGalleryLoading(false);
-        setGalleryItems([]);
-      }
-    );
-
-    return () => unsubscribeGallery();
-  }, [db]);
+  return () => unsubscribeGallery();
+}, [db, currentUser?.uid]);   // ✅ Re-run on auth change
 
   // 7. Fetch Notifications
   useEffect(() => {
     if (!db || !currentUser) return;
-  
+
     const fetchNotifications = async () => {
       try {
         if (currentUser.role === 'student') {
@@ -672,7 +718,7 @@ const App = () => {
             orderBy('createdAt', 'desc'),
             limit(50)
           );
-          
+
           const unsubscribe = onSnapshot(notificationsQuery, (snapshot) => {
             const fetchedNotifications = snapshot.docs.map(doc => ({
               id: doc.id,
@@ -684,14 +730,14 @@ const App = () => {
           });
           return () => unsubscribe();
         }
-        
+
         const notificationsQuery = query(
           collection(db, 'notifications'),
           where('recipientRole', 'in', [currentUser.role, 'all']),
           orderBy('createdAt', 'desc'),
           limit(50)
         );
-        
+
         const unsubscribe = onSnapshot(notificationsQuery, (snapshot) => {
           const fetchedNotifications = snapshot.docs.map(doc => ({
             id: doc.id,
@@ -706,15 +752,20 @@ const App = () => {
         console.error('Error fetching notifications:', error);
       }
     };
-  
+
     fetchNotifications();
   }, [db, currentUser]);
 
-  // Loading state
-  if (loading) {
+  // ============================================
+  // LOADING GATE
+  // ============================================
+  if (!authResolved || loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600"></div>
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600 mx-auto"></div>
+          <p className="text-sm text-gray-500 mt-4">Loading your dashboard...</p>
+        </div>
       </div>
     );
   }
@@ -879,12 +930,12 @@ const App = () => {
 
         <Route path="/finance/login" element={<FinanceLogin />} />
         <Route 
-            path="/finance/dashboard" 
-             element={
-               <PrivateRoute user={currentUser} requiredRole={['finance', 'admin']}>
-                 <FinanceDashboard currentUser={currentUser} />
-               </PrivateRoute>
-           } 
+          path="/finance/dashboard" 
+          element={
+            <PrivateRoute user={currentUser} requiredRole={['finance', 'admin']}>
+              <FinanceDashboard currentUser={currentUser} />
+            </PrivateRoute>
+          } 
         />
 
         <Route path="*" element={<Navigate to="/" replace />} />
@@ -946,7 +997,7 @@ const StudentsView = ({ students, studentsLoading, studentsError, currentUser, d
             {students.map(student => (
               <div key={student.id} className="border rounded-lg p-4 shadow-sm">
                 <h3 className="font-bold text-lg">{student.fullName || student.name}</h3>
-                <p className="text-gray-600">Grade: {student.grade}{student.section}</p>
+                <p className="text-gray-600">{student.grade}{student.section}</p>
                 <p className="text-sm text-gray-500">{student.email}</p>
                 <p className="text-xs text-gray-400 mt-2">Parent: {student.parentName}</p>
               </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { auth } from '../firebase/config';
 import { signInWithEmailAndPassword } from 'firebase/auth';
@@ -44,7 +44,7 @@ const AdminLogin = () => {
       
       // Show success feedback before navigation
       setTimeout(() => {
-        navigate('/admin/dashboard');
+        navigate('/dashboard');
       }, 300);
     } catch (error) {
       console.error('❌ Login error:', error);
@@ -78,13 +78,13 @@ const AdminLogin = () => {
   };
 
   // Load remembered email on component mount
-  useState(() => {
-    const rememberedEmail = localStorage.getItem('rememberedEmail');
-    if (rememberedEmail) {
-      setEmail(rememberedEmail);
-      setRememberMe(true);
-    }
-  }, []);
+useEffect(() => {
+  const rememberedEmail = localStorage.getItem('rememberedEmail');
+  if (rememberedEmail) {
+    setEmail(rememberedEmail);
+    setRememberMe(true);
+  }
+}, []);
 
   const loginTypes = [
     {

@@ -1,11 +1,11 @@
-// components/teachers/TeacherStudents.jsx - UPDATED to work with your data
-import React, { useState, useEffect } from 'react';
+// components/teachers/TeacherStudents.jsx - OPTIMIZED (FIXED LOADING BUG)
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Users, Search, Filter, Mail, Phone, Calendar, Award, 
   TrendingUp, TrendingDown, MoreVertical, Download, Eye,
   UserCheck, UserX, Clock, Loader, Star, BookOpen, GraduationCap
 } from 'lucide-react';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 
 const TeacherStudents = ({ teacherId, teacherCourses, enrolledStudentsByCourse, students }) => {
@@ -16,172 +16,202 @@ const TeacherStudents = ({ teacherId, teacherCourses, enrolledStudentsByCourse, 
   const [allStudents, setAllStudents] = useState([]);
   const [studentPerformance, setStudentPerformance] = useState({});
 
+  // ✅ Stable key — recompute effect only when actual IDs change, not references
+  const courseIdsKey = useMemo(
+    () => (teacherCourses || []).map(c => c.id).sort().join('|'),
+    [teacherCourses]
+  );
+
+  // ✅ Stable key for enrollment data — based on counts, not object identity
+  const enrollmentKey = useMemo(() => {
+    if (!enrolledStudentsByCourse) return '';
+    return Object.entries(enrolledStudentsByCourse)
+      .map(([courseId, list]) => `${courseId}:${list?.length || 0}`)
+      .sort()
+      .join('|');
+  }, [enrolledStudentsByCourse]);
+
   // Load all enrolled students with their details
   useEffect(() => {
+    // ✅ Handle missing prerequisites — stop loading gracefully
+    if (!teacherId) {
+      setLoading(false);
+      return;
+    }
+    if (teacherCourses.length === 0) {
+      setLoading(false);
+      return;
+    }
+    if (!enrolledStudentsByCourse || Object.keys(enrolledStudentsByCourse).length === 0) {
+      setLoading(false);
+      return;
+    }
+
+    let isMounted = true;
+    // ✅ Ref is scoped to THIS effect run, not shared across renders
+    let isLoading = false;
+
     const loadStudents = async () => {
+      if (isLoading) return;   // local guard — reset every effect run
+      isLoading = true;
       setLoading(true);
       const studentMap = new Map();
-      
+
       try {
         console.log('📚 Loading students for teacher:', teacherId);
-        console.log('Enrolled students by course:', enrolledStudentsByCourse);
-        
-        // Process each course's enrolled students
+
+        // ─────────────────────────────────────────────
+        // STEP 1: Build student map from enrollment data (no queries)
+        // ─────────────────────────────────────────────
         for (const [courseId, courseStudents] of Object.entries(enrolledStudentsByCourse)) {
           const course = teacherCourses.find(c => c.id === courseId);
-          
-          if (!courseStudents || courseStudents.length === 0) {
-            console.log(`No students in course: ${course?.courseName}`);
-            continue;
-          }
-          
-          console.log(`Processing ${courseStudents.length} students for course: ${course?.courseName}`);
-          
+          if (!courseStudents || courseStudents.length === 0) continue;
+
           for (const enrollment of courseStudents) {
             const studentId = enrollment.studentId;
-            
+            if (!studentId) continue;
+
             if (!studentMap.has(studentId)) {
-              // Fetch full student details
-              let studentDetails = null;
-              
-              // Try to find in students array first
-              const existingStudent = students?.find(s => 
-                s.id === studentId || s.studentId === studentId || s.uid === studentId
-              );
-              
-              if (existingStudent) {
-                studentDetails = existingStudent;
-              } else {
-                // Fetch from Firestore students collection
-                const studentQuery = query(
-                  collection(db, 'students'),
-                  where('studentId', '==', studentId)
-                );
-                const studentSnapshot = await getDocs(studentQuery);
-                
-                if (!studentSnapshot.empty) {
-                  const studentDoc = studentSnapshot.docs[0];
-                  studentDetails = { id: studentDoc.id, ...studentDoc.data() };
-                } else {
-                  // Try users collection as fallback
-                  const userQuery = query(
-                    collection(db, 'users'),
-                    where('uid', '==', studentId)
-                  );
-                  const userSnapshot = await getDocs(userQuery);
-                  
-                  if (!userSnapshot.empty) {
-                    const userData = userSnapshot.docs[0].data();
-                    studentDetails = {
-                      id: studentId,
-                      fullName: userData.name || userData.fullName,
-                      email: userData.email,
-                      studentId: userData.studentId || studentId,
-                      grade: userData.grade,
-                      section: userData.section
-                    };
-                  }
-                }
-              }
-              
-              if (studentDetails) {
-                studentMap.set(studentId, {
-                  ...studentDetails,
-                  courses: [],
-                  enrollmentDate: enrollment.enrolledAt || enrollment.enrollmentDate || new Date(),
-                  attendanceRate: 0,
-                  averageGrade: 0
-                });
-              }
+              studentMap.set(studentId, {
+                ...enrollment,
+                courses: [],
+                enrollmentDate: enrollment.enrolledAt || enrollment.enrollmentDate || new Date(),
+                attendanceRate: 0,
+                averageGrade: 0,
+              });
             }
-            
-            // Add course to student's course list
-            if (studentMap.has(studentId) && course) {
+
+            if (course) {
               const studentData = studentMap.get(studentId);
               studentData.courses.push({
                 courseId: course.id,
                 courseName: course.courseName,
-                enrollmentStatus: enrollment.status || 'active'
+                enrollmentStatus: enrollment.status || 'active',
               });
               studentMap.set(studentId, studentData);
             }
           }
         }
-        
-        // Fetch grades for each student
-        const performanceData = {};
+
+        // Fallback — cross-reference the `students` prop
+        const studentsById = new Map();
+        (students || []).forEach(s => {
+          if (s.studentId) studentsById.set(s.studentId, s);
+          if (s.id) studentsById.set(s.id, s);
+        });
+
         for (const [studentId, student] of studentMap) {
+          if (!student.fullName) {
+            const fallback = studentsById.get(studentId);
+            if (fallback) {
+              studentMap.set(studentId, {
+                ...student,
+                ...fallback,
+                courses: student.courses,
+                enrollmentDate: student.enrollmentDate,
+              });
+            }
+          }
+        }
+
+        // ─────────────────────────────────────────────
+        // STEP 2: Fetch ALL grades for these students in batched queries
+        // ─────────────────────────────────────────────
+        const studentIdList = Array.from(studentMap.keys());
+        const performanceData = {};
+
+        studentIdList.forEach(id => {
+          performanceData[id] = { averageGrade: 0, totalAssignments: 0, gradedAssignments: 0 };
+        });
+
+        for (let i = 0; i < studentIdList.length; i += 30) {
+          if (!isMounted) return;
+          const batch = studentIdList.slice(i, i + 30);
           try {
             const gradesQuery = query(
               collection(db, 'grades'),
-              where('studentId', '==', student.studentId || studentId)
+              where('studentId', 'in', batch)
             );
             const gradesSnapshot = await getDocs(gradesQuery);
-            const grades = gradesSnapshot.docs.map(doc => doc.data());
-            
-            if (grades.length > 0) {
-              const avgGrade = grades.reduce((sum, g) => sum + (g.percentage || g.grade || 0), 0) / grades.length;
+
+            const gradesByStudent = {};
+            gradesSnapshot.forEach(doc => {
+              const g = doc.data();
+              if (!g.studentId) return;
+              if (!gradesByStudent[g.studentId]) gradesByStudent[g.studentId] = [];
+              gradesByStudent[g.studentId].push(g);
+            });
+
+            for (const [studentId, grades] of Object.entries(gradesByStudent)) {
+              const avgGrade = grades.reduce(
+                (sum, g) => sum + (g.percentage || g.grade || 0), 0
+              ) / grades.length;
               performanceData[studentId] = {
                 averageGrade: Math.round(avgGrade),
                 totalAssignments: grades.length,
-                gradedAssignments: grades.filter(g => g.score !== undefined).length
+                gradedAssignments: grades.filter(g => g.score !== undefined).length,
               };
-            } else {
-              performanceData[studentId] = { averageGrade: 0, totalAssignments: 0, gradedAssignments: 0 };
             }
           } catch (error) {
-            console.error(`Error fetching grades for student ${studentId}:`, error);
-            performanceData[studentId] = { averageGrade: 0, totalAssignments: 0, gradedAssignments: 0 };
+            console.warn(`Error batch-fetching grades for chunk ${i / 30}:`, error);
           }
         }
-        
+
+        if (!isMounted) return;
+
         setStudentPerformance(performanceData);
         setAllStudents(Array.from(studentMap.values()));
         console.log(`✅ Loaded ${studentMap.size} students total`);
-        
+
       } catch (error) {
         console.error('Error loading students:', error);
+        if (isMounted) {
+          setAllStudents([]);
+          setStudentPerformance({});
+        }
       } finally {
-        setLoading(false);
+        // ✅ ALWAYS reset loading, regardless of what happened
+        if (isMounted) setLoading(false);
+        isLoading = false;
       }
     };
-    
-    // Only load if we have courses with enrolled students
-    if (teacherCourses.length > 0 && Object.keys(enrolledStudentsByCourse).length > 0) {
-      loadStudents();
-    } else {
-      setLoading(false);
-      console.log('No courses or enrolled students found');
-    }
-  }, [enrolledStudentsByCourse, teacherCourses, students, teacherId]);
-  
-  const filteredStudents = allStudents.filter(student => {
-    // Search filter
-    if (searchQuery && 
-        !student.fullName?.toLowerCase().includes(searchQuery.toLowerCase()) &&
-        !student.email?.toLowerCase().includes(searchQuery.toLowerCase()) &&
-        !student.studentId?.toLowerCase().includes(searchQuery.toLowerCase())) {
-      return false;
-    }
-    
-    // Course filter
-    if (selectedCourse !== 'all') {
-      const hasCourse = student.courses?.some(course => course.courseId === selectedCourse);
-      if (!hasCourse) return false;
-    }
-    
-    // Grade filter
-    const performance = studentPerformance[student.id];
-    if (selectedGrade !== 'all' && performance) {
-      const avgGrade = performance.averageGrade || 0;
-      if (selectedGrade === 'excellent' && avgGrade < 85) return false;
-      if (selectedGrade === 'good' && (avgGrade < 70 || avgGrade >= 85)) return false;
-      if (selectedGrade === 'average' && (avgGrade < 60 || avgGrade >= 70)) return false;
-      if (selectedGrade === 'needsImprovement' && avgGrade >= 60) return false;
-    }
-    
-    return true;
-  });
+
+    loadStudents();
+
+    return () => { isMounted = false; };
+  }, [teacherId, courseIdsKey, enrollmentKey, students]);
+
+  // ─────────────────────────────────────────────
+  // Derived data — memoized
+  // ─────────────────────────────────────────────
+  const filteredStudents = useMemo(() => {
+    return allStudents.filter(student => {
+      if (searchQuery) {
+        const term = searchQuery.toLowerCase();
+        const matches =
+          student.fullName?.toLowerCase().includes(term) ||
+          student.email?.toLowerCase().includes(term) ||
+          student.studentId?.toLowerCase().includes(term);
+        if (!matches) return false;
+      }
+
+      if (selectedCourse !== 'all') {
+        const hasCourse = student.courses?.some(c => c.courseId === selectedCourse);
+        if (!hasCourse) return false;
+      }
+
+      const performance = studentPerformance[student.id] || studentPerformance[student.studentId];
+      if (selectedGrade !== 'all' && performance) {
+        const avg = performance.averageGrade || 0;
+        if (selectedGrade === 'excellent' && avg < 85) return false;
+        if (selectedGrade === 'good' && (avg < 70 || avg >= 85)) return false;
+        if (selectedGrade === 'average' && (avg < 60 || avg >= 70)) return false;
+        if (selectedGrade === 'needsImprovement' && avg >= 60) return false;
+      }
+
+      return true;
+    });
+  }, [allStudents, searchQuery, selectedCourse, selectedGrade, studentPerformance]);
 
   const exportToCSV = () => {
     const csvData = filteredStudents.map(student => ({
@@ -189,16 +219,17 @@ const TeacherStudents = ({ teacherId, teacherCourses, enrolledStudentsByCourse, 
       'Full Name': student.fullName,
       'Email': student.email,
       'Courses': student.courses?.map(c => c.courseName).join(', '),
-      'Average Grade': `${studentPerformance[student.id]?.averageGrade || 0}%`,
-      'Status': 'Active'
+      'Average Grade': `${studentPerformance[student.id]?.averageGrade || studentPerformance[student.studentId]?.averageGrade || 0}%`,
+      'Status': 'Active',
     }));
-    
+
     if (csvData.length === 0) return;
-    
-    const csvContent = [Object.keys(csvData[0]).join(','), 
-      ...csvData.map(row => Object.values(row).join(','))
+
+    const csvContent = [
+      Object.keys(csvData[0]).join(','),
+      ...csvData.map(row => Object.values(row).map(v => `"${v}"`).join(',')),
     ].join('\n');
-    
+
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -208,10 +239,20 @@ const TeacherStudents = ({ teacherId, teacherCourses, enrolledStudentsByCourse, 
     URL.revokeObjectURL(url);
   };
 
+  // ✅ ZIMSEC O-Level grading scale
+  const getLetterGrade = (percentage) => {
+    if (percentage >= 75) return 'A';
+    if (percentage >= 65) return 'B';
+    if (percentage >= 50) return 'C';
+    if (percentage >= 45) return 'D';
+    return 'F';
+  };
+
+  // ✅ ZIMSEC-aligned performance color
   const getPerformanceColor = (percentage) => {
-    if (percentage >= 85) return 'text-emerald-600';
-    if (percentage >= 70) return 'text-blue-600';
-    if (percentage >= 60) return 'text-yellow-600';
+    if (percentage >= 75) return 'text-emerald-600';
+    if (percentage >= 65) return 'text-blue-600';
+    if (percentage >= 50) return 'text-yellow-600';
     return 'text-red-600';
   };
 
@@ -226,11 +267,15 @@ const TeacherStudents = ({ teacherId, teacherCourses, enrolledStudentsByCourse, 
 
   const totalStudents = allStudents.length;
   const avgPerCourse = Math.round(totalStudents / Math.max(teacherCourses.length, 1));
-  const avgGradeOverall = allStudents.length > 0 
-    ? Math.round(allStudents.reduce((sum, s) => sum + (studentPerformance[s.id]?.averageGrade || 0), 0) / allStudents.length)
+  const avgGradeOverall = allStudents.length > 0
+    ? Math.round(
+        allStudents.reduce((sum, s) => {
+          const p = studentPerformance[s.id] || studentPerformance[s.studentId];
+          return sum + (p?.averageGrade || 0);
+        }, 0) / allStudents.length
+      )
     : 0;
 
-  // If no students enrolled yet
   if (totalStudents === 0) {
     return (
       <div className="space-y-6">
@@ -240,7 +285,6 @@ const TeacherStudents = ({ teacherId, teacherCourses, enrolledStudentsByCourse, 
             <p className="text-gray-600 mt-1">Manage and track student performance across your courses</p>
           </div>
         </div>
-        
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-12 text-center">
           <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
           <h3 className="text-xl font-bold text-gray-900 mb-2">No Students Enrolled Yet</h3>
@@ -266,7 +310,7 @@ const TeacherStudents = ({ teacherId, teacherCourses, enrolledStudentsByCourse, 
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <button 
+          <button
             onClick={exportToCSV}
             disabled={filteredStudents.length === 0}
             className="px-4 py-2.5 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 disabled:opacity-50"
@@ -345,7 +389,7 @@ const TeacherStudents = ({ teacherId, teacherCourses, enrolledStudentsByCourse, 
               />
             </div>
           </div>
-          
+
           <div className="flex flex-wrap gap-3">
             <div className="relative">
               <select
@@ -360,7 +404,7 @@ const TeacherStudents = ({ teacherId, teacherCourses, enrolledStudentsByCourse, 
               </select>
               <Filter className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
             </div>
-            
+
             <div className="relative">
               <select
                 value={selectedGrade}
@@ -368,10 +412,10 @@ const TeacherStudents = ({ teacherId, teacherCourses, enrolledStudentsByCourse, 
                 className="appearance-none pl-4 pr-10 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white hover:bg-gray-50 transition-colors cursor-pointer min-w-[150px]"
               >
                 <option value="all">All Grades</option>
-                <option value="excellent">Excellent (85%+)</option>
-                <option value="good">Good (70-84%)</option>
-                <option value="average">Average (60-69%)</option>
-                <option value="needsImprovement">Needs Improvement (&lt;60%)</option>
+                <option value="excellent">Excellent (75%+)</option>
+                <option value="good">Good (65-74%)</option>
+                <option value="average">Average (50-64%)</option>
+                <option value="needsImprovement">Needs Improvement (&lt;50%)</option>
               </select>
               <Filter className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
             </div>
@@ -400,11 +444,15 @@ const TeacherStudents = ({ teacherId, teacherCourses, enrolledStudentsByCourse, 
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {filteredStudents.map((student) => {
-                  const performance = studentPerformance[student.id] || { averageGrade: 0 };
+                  const performance =
+                    studentPerformance[student.id] ||
+                    studentPerformance[student.studentId] ||
+                    { averageGrade: 0 };
                   const avgGrade = performance.averageGrade || 0;
-                  
+                  const key = student.id || student.studentId;
+
                   return (
-                    <tr key={student.id} className="hover:bg-gray-50 transition-colors">
+                    <tr key={key} className="hover:bg-gray-50 transition-colors">
                       <td className="py-4 px-4">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-blue-600 rounded-full flex items-center justify-center text-white font-bold">
@@ -412,10 +460,10 @@ const TeacherStudents = ({ teacherId, teacherCourses, enrolledStudentsByCourse, 
                           </div>
                           <div>
                             <div className="font-medium text-gray-900">{student.fullName || 'Unknown'}</div>
-                            <div className="text-sm text-gray-500">{student.studentId || student.id?.substring(0, 8)}</div>
+                            <div className="text-sm text-gray-500">{student.studentId || key?.substring(0, 8)}</div>
                           </div>
                         </div>
-                       </td>
+                      </td>
                       <td className="py-4 px-4">
                         <div className="space-y-1">
                           <div className="flex items-center gap-2 text-sm">
@@ -429,7 +477,7 @@ const TeacherStudents = ({ teacherId, teacherCourses, enrolledStudentsByCourse, 
                             </div>
                           )}
                         </div>
-                       </td>
+                      </td>
                       <td className="py-4 px-4">
                         <div className="flex flex-wrap gap-1">
                           {(student.courses || []).slice(0, 2).map((course, idx) => (
@@ -443,49 +491,49 @@ const TeacherStudents = ({ teacherId, teacherCourses, enrolledStudentsByCourse, 
                             </span>
                           )}
                         </div>
-                       </td>
+                      </td>
                       <td className="py-4 px-4">
                         <div className="flex items-center gap-2">
                           <span className={`font-bold ${getPerformanceColor(avgGrade)}`}>
                             {avgGrade}%
                           </span>
-                          {avgGrade >= 85 ? (
+                          {avgGrade >= 75 ? (
                             <TrendingUp className="w-4 h-4 text-emerald-600" />
-                          ) : avgGrade < 60 ? (
+                          ) : avgGrade < 50 ? (
                             <TrendingDown className="w-4 h-4 text-red-600" />
                           ) : null}
                         </div>
-                       </td>
+                      </td>
                       <td className="py-4 px-4">
                         <span className="px-3 py-1 bg-emerald-100 text-emerald-800 text-xs font-medium rounded-full">
                           Active
                         </span>
-                       </td>
+                      </td>
                       <td className="py-4 px-4">
                         <div className="flex items-center gap-2">
-                          <button 
+                          <button
                             onClick={() => window.open(`mailto:${student.email}`, '_blank')}
                             className="p-2 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                             title="Email Student"
                           >
                             <Mail className="w-4 h-4" />
                           </button>
-                          <button 
+                          <button
                             className="p-2 text-gray-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
                             title="View Details"
                           >
                             <Eye className="w-4 h-4" />
                           </button>
                         </div>
-                       </td>
-                     </tr>
+                      </td>
+                    </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
         )}
-        
+
         {filteredStudents.length > 0 && (
           <div className="mt-4 text-center text-sm text-gray-500">
             Showing {filteredStudents.length} of {allStudents.length} students

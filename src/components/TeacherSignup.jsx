@@ -52,12 +52,29 @@ const TeacherSignup = () => {
 
   // Available subjects (can be fetched from Firestore later)
   const availableSubjects = [
-    'Mathematics', 'Physics', 'Chemistry', 'Biology', 
-    'English', 'History', 'Geography', 'Computer Science',
-    'Art', 'Music', 'Physical Education', 'Foreign Languages'
+    'English Language',
+    'Shona',
+    'Ndebele',
+    'History',
+    'Heritage Studies',
+    'Mathematics',
+    'Combined Science',
+    'Geography',
+    'Agriculture',
+    'FRS (Family Religious Studies)',
+    'Art & Design',
+    'ICT',
+    'Physical Education'
   ];
 
-  const availableGrades = ['Pre-K', 'K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
+  const availableGrades = [
+  // Primary School
+  'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7',
+  // Secondary School (Zimbabwean System)
+  'Form 1', 'Form 2', 'Form 3', 'Form 4', 'Form 5', 'Form 6',
+  // With Streams (for Form 4)
+  'Form 4 Arts', 'Form 4 Sciences', 'Form 4 Commercials'
+];
 
   // Progress steps
   const steps = [
@@ -779,6 +796,7 @@ const TeacherSignup = () => {
                   <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
                     {availableGrades.map(grade => (
                       <button
+
                         key={grade}
                         type="button"
                         onClick={() => toggleArrayItem('preferredGrades', grade)}
@@ -790,7 +808,7 @@ const TeacherSignup = () => {
                           }
                         `}
                       >
-                        Grade {grade}
+                         {grade}
                       </button>
                     ))}
                   </div>

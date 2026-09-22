@@ -338,7 +338,7 @@ const EnrollStudentsModal = ({ teacherId, teacherName, courses, students, enroll
                 <option value="">Choose a course...</option>
                 {courses.map(course => (
                   <option key={course.id} value={course.id}>
-                    {course.courseName} - Grade {course.grade} ({course.courseId})
+                    {course.courseName} - {course.grade} ({course.courseId})
                   </option>
                 ))}
               </select>

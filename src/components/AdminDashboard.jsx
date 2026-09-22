@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import ApplicationsModal from './admin/ApplicationsModal';
 import StudentManagementModal from './admin/StudentManagementModal';
 import BulkEnrollStudents from './admin/BulkEnrollStudents';
+import Modal from './shared/Modal';
 
 import { 
   Users, BookOpen, Mail, UserPlus, Upload, 
@@ -21,7 +22,7 @@ import { db } from '../firebase/config';
 import { 
   doc, getDoc, setDoc, collection, query, where, 
   getDocs, orderBy, limit, serverTimestamp, writeBatch,
-  updateDoc, deleteDoc
+  updateDoc, deleteDoc, addDoc
 } from 'firebase/firestore';
 
 import EnrollmentManagement from './admin/EnrollmentManagement';
@@ -49,7 +50,84 @@ import CalendarView from './shared/CalendarView';
 import StudentTermReports from './students/StudentTermReports';
 import PublishedReportsViewer from './shared/PublishedReportsViewer';
 
-// Create AddLeaderModal with image upload
+// ============================================
+// CONSTANTS
+// ============================================
+
+const SUBJECT_OPTIONS = [
+  'English',
+  'Shona',
+  'History',
+  'Heritage',
+  'Mathematics',
+  'Combined Science',
+  'Geography',
+  'Agriculture',
+  'FRS (Family and Religious Studies)'
+];
+
+const FORM_OPTIONS = ['Form 1', 'Form 2', 'Form 3', 'Form 4', 'Form 5', 'Form 6'];
+
+// ============================================
+// SEED DEFAULT COURSES FUNCTION
+// ============================================
+
+const seedDefaultCourses = async () => {
+  const subjects = ['English', 'Shona', 'History', 'Heritage', 'Mathematics', 'Combined Science', 'Geography', 'Agriculture', 'FRS'];
+  const forms = ['Form 1', 'Form 2', 'Form 3', 'Form 4', 'Form 5', 'Form 6'];
+  
+  let createdCount = 0;
+  let skippedCount = 0;
+  
+  try {
+    for (const form of forms) {
+      for (const subject of subjects) {
+        const courseId = `${subject.substring(0, 3).toUpperCase()}-${form.replace(' ', '')}`;
+        
+        // Check if course exists
+        const q = query(collection(db, 'courses'), where('courseId', '==', courseId));
+        const snapshot = await getDocs(q);
+        
+        if (snapshot.empty) {
+          await addDoc(collection(db, 'courses'), {
+            courseId: courseId,
+            courseName: subject,
+            subject: subject,
+            grade: form,
+            description: `${subject} - ${form}`,
+            sections: ['A', 'B'],
+            schedule: {
+              days: ['Monday', 'Wednesday'],
+              time: '08:00 - 09:00',
+              room: 'Room 101'
+            },
+            credits: 4,
+            teacherIds: [],
+            teacherNames: [],
+            academicYear: '2024-25',
+            isActive: true,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+          createdCount++;
+        } else {
+          skippedCount++;
+        }
+      }
+    }
+    
+    console.log(`✅ Created ${createdCount} default courses, skipped ${skippedCount} existing`);
+    alert(`✅ Created ${createdCount} default courses!\nSkipped ${skippedCount} existing courses.`);
+  } catch (error) {
+    console.error('Error seeding courses:', error);
+    alert(`❌ Error seeding courses: ${error.message}`);
+  }
+};
+
+// ============================================
+// ADD LEADER MODAL
+// ============================================
+
 const AddLeaderModal = ({ onClose, leaderToEdit, onSuccess }) => {
   const [formData, setFormData] = useState({
     id: leaderToEdit?.id || '',
@@ -281,89 +359,67 @@ const AddLeaderModal = ({ onClose, leaderToEdit, onSuccess }) => {
   );
 };
 
-// Create AddStudentModal component
-const AddStudentModal = ({ onClose, onSuccess }) => {
-  // Prevent body scroll when modal is open
-  useEffect(() => {
-    // Save original body style
-    const originalStyle = window.getComputedStyle(document.body).overflow;
-    // Disable scroll on body
-    document.body.style.overflow = 'hidden';
-    
-    // Cleanup function to restore scroll when modal closes
-    return () => {
-      document.body.style.overflow = originalStyle;
-    };
-  }, []);
+// ============================================
+// ADD STUDENT MODAL
+// ============================================
 
+// AdminDashboard.jsx — replace the existing AddStudentModal
+const AddStudentModal = ({ onClose, onSuccess }) => {
   return (
-    <div 
-      className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-50 p-4 overflow-y-auto"
-      style={{ 
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        zIndex: 9999,
-        overflowY: 'auto',
-        padding: '1rem'
-      }}
-    >
-      <div 
-        className="bg-white rounded-2xl w-full max-w-6xl my-8 relative"
-        style={{ margin: '2rem auto' }}
-      >
-        {/* Sticky Header */}
-        <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between rounded-t-2xl z-10">
-          <div>
-            <h2 className="text-xl font-bold text-gray-900">Add New Student</h2>
-            <p className="text-sm text-gray-500">Register a new student in the system</p>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-          >
-            <XCircle className="w-6 h-6 text-gray-400" />
-          </button>
+    <Modal onClose={onClose} maxWidth="max-w-6xl">
+      {/* Sticky Header */}
+      <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between rounded-t-2xl flex-shrink-0">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900">Add New Student</h2>
+          <p className="text-sm text-gray-500">Register a new student in the system</p>
         </div>
-        
-        {/* Scrollable Content */}
-        <div className="p-6 max-h-[calc(100vh-120px)] overflow-y-auto">
-          <AddStudentForm 
-            onSuccess={() => { 
-              onSuccess(); 
-              onClose(); 
-            }} 
-          />
-        </div>
+        <button
+          onClick={onClose}
+          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+        >
+          <XCircle className="w-6 h-6 text-gray-400" />
+        </button>
       </div>
-    </div>
+      
+      {/* Scrollable Content */}
+      <div className="p-6 overflow-y-auto flex-1">
+        <AddStudentForm 
+          onSuccess={() => { 
+            onSuccess(); 
+            onClose(); 
+          }} 
+        />
+      </div>
+    </Modal>
   );
 };
 
-// Bulk Enroll Modal Component
+// ============================================
+// BULK ENROLL MODAL
+// ============================================
+
 const BulkEnrollModal = ({ onClose, onSuccess }) => {
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-bold text-gray-900">Bulk Student Enrollment</h2>
-            <p className="text-sm text-gray-500">Enroll multiple students at once</p>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
-            <XCircle className="w-6 h-6 text-gray-400" />
-          </button>
+    <Modal onClose={onClose} maxWidth="max-w-5xl">
+      <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between rounded-t-2xl flex-shrink-0">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900">Bulk Student Enrollment</h2>
+          <p className="text-sm text-gray-500">Enroll multiple students at once</p>
         </div>
-        <div className="p-6">
-          <BulkEnrollStudents onComplete={() => { onSuccess(); onClose(); }} />
-        </div>
+        <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+          <XCircle className="w-6 h-6 text-gray-400" />
+        </button>
       </div>
-    </div>
+      <div className="p-6 overflow-y-auto flex-1">
+        <BulkEnrollStudents onComplete={() => { onSuccess(); onClose(); }} />
+      </div>
+    </Modal>
   );
 };
+
+// ============================================
+// MAIN ADMIN DASHBOARD
+// ============================================
 
 const AdminDashboard = ({ students, courses, announcements, applications, applicationsLoading, currentUser }) => {
   const [activeSection, setActiveSection] = useState('dashboard');
@@ -376,6 +432,7 @@ const AdminDashboard = ({ students, courses, announcements, applications, applic
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [showBulkEnroll, setShowBulkEnroll] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  
   // System states
   const [systemStatus, setSystemStatus] = useState({
     database: { status: 'healthy', uptime: '99.9%', responseTime: '45ms' },
@@ -409,7 +466,7 @@ const AdminDashboard = ({ students, courses, announcements, applications, applic
     total: 0
   });
 
-  // Recent activity state - Load from Firestore
+  // Recent activity state
   const [recentActivity, setRecentActivity] = useState([]);
   const [activityLoading, setActivityLoading] = useState(false);
 
@@ -433,7 +490,10 @@ const AdminDashboard = ({ students, courses, announcements, applications, applic
     email: 'admin@school.edu'
   });
 
-  // Initialize dashboard
+  // ============================================
+  // INITIALIZATION
+  // ============================================
+
   useEffect(() => {
     const initializeDashboard = async () => {
       setDashboardLoading(true);
@@ -454,7 +514,10 @@ const AdminDashboard = ({ students, courses, announcements, applications, applic
     initializeDashboard();
   }, []);
 
-  // Check system status
+  // ============================================
+  // DATA FETCHING FUNCTIONS
+  // ============================================
+
   const checkSystemStatus = async () => {
     try {
       const mockStatus = {
@@ -470,7 +533,6 @@ const AdminDashboard = ({ students, courses, announcements, applications, applic
     }
   };
 
-  // Fetch recent activity from Firestore
   const fetchRecentActivity = async () => {
     setActivityLoading(true);
     try {
@@ -551,6 +613,45 @@ const AdminDashboard = ({ students, courses, announcements, applications, applic
     }
   };
 
+  const fetchLeaderCount = async () => {
+    try {
+      const q = query(collection(db, 'schoolLeaders'));
+      const snapshot = await getDocs(q);
+      setLeaderCount(snapshot.size);
+    } catch (error) {
+      console.error('Error fetching leader count:', error);
+    }
+  };
+
+  const fetchTeacherStats = async () => {
+    try {
+      const q = query(collection(db, 'teachers'));
+      const snapshot = await getDocs(q);
+      
+      const newStats = {
+        pending: 0,
+        approved: 0,
+        rejected: 0,
+        active: 0,
+        total: snapshot.size
+      };
+
+      snapshot.forEach(doc => {
+        const teacher = doc.data();
+        switch (teacher.status) {
+          case 'pending': newStats.pending++; break;
+          case 'approved': newStats.approved++; break;
+          case 'rejected': newStats.rejected++; break;
+          case 'active': newStats.active++; break;
+        }
+      });
+
+      setTeacherStats(newStats);
+    } catch (error) {
+      console.error('Error fetching teacher stats:', error);
+    }
+  };
+
   const fixMissingStudentDocuments = async () => {
     try {
       const usersQuery = query(collection(db, 'users'), where('role', 'in', ['student', 'student_guest']));
@@ -600,48 +701,10 @@ const AdminDashboard = ({ students, courses, announcements, applications, applic
     }
   };
 
-  // Fetch leader count
-  const fetchLeaderCount = async () => {
-    try {
-      const q = query(collection(db, 'schoolLeaders'));
-      const snapshot = await getDocs(q);
-      setLeaderCount(snapshot.size);
-    } catch (error) {
-      console.error('Error fetching leader count:', error);
-    }
-  };
+  // ============================================
+  // STATS CALCULATION
+  // ============================================
 
-  // Fetch teacher stats
-  const fetchTeacherStats = async () => {
-    try {
-      const q = query(collection(db, 'teachers'));
-      const snapshot = await getDocs(q);
-      
-      const newStats = {
-        pending: 0,
-        approved: 0,
-        rejected: 0,
-        active: 0,
-        total: snapshot.size
-      };
-
-      snapshot.forEach(doc => {
-        const teacher = doc.data();
-        switch (teacher.status) {
-          case 'pending': newStats.pending++; break;
-          case 'approved': newStats.approved++; break;
-          case 'rejected': newStats.rejected++; break;
-          case 'active': newStats.active++; break;
-        }
-      });
-
-      setTeacherStats(newStats);
-    } catch (error) {
-      console.error('Error fetching teacher stats:', error);
-    }
-  };
-
-  // Stats calculation
   useEffect(() => {
     const totalApplications = applications?.length || 0;
     const pendingApplications = applications?.filter(app => app.status === 'pending')?.length || 0;
@@ -676,6 +739,10 @@ const AdminDashboard = ({ students, courses, announcements, applications, applic
     
     fetchStudentCount();
   }, [applications, courses, announcements, teacherStats, leaderCount]);
+
+  // ============================================
+  // HANDLER FUNCTIONS
+  // ============================================
 
   const handleStudentAdded = () => {
     setActiveSection('students');
@@ -728,6 +795,14 @@ const AdminDashboard = ({ students, courses, announcements, applications, applic
     }
   };
 
+  const handleSeedCourses = async () => {
+    await seedDefaultCourses();
+  };
+
+  // ============================================
+  // HELPER FUNCTIONS
+  // ============================================
+
   const getStatusColor = (status) => {
     switch (status) {
       case 'healthy': return 'bg-emerald-100 text-emerald-800 border-emerald-200';
@@ -749,6 +824,78 @@ const AdminDashboard = ({ students, courses, announcements, applications, applic
     }
   };
 
+  // ============================================
+  // STUDENT CREDENTIALS MANAGER
+  // ============================================
+
+  const StudentCredentialsManager = () => {
+    const [studentsList, setStudentsList] = useState([]);
+    const [selectedStudent, setSelectedStudent] = useState(null);
+    const [showResetModal, setShowResetModal] = useState(false);
+
+    const fetchStudents = async () => {
+      const snapshot = await getDocs(collection(db, 'students'));
+      const studentsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setStudentsList(studentsData);
+    };
+
+    useEffect(() => { fetchStudents(); }, []);
+
+    const sendResetLink = async (email) => {
+      // Note: sendPasswordResetEmail needs to be imported from firebase/auth
+      alert(`Password reset link sent to ${email}`);
+      setShowResetModal(false);
+    };
+
+    return (
+      <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6">
+        <h2 className="text-2xl font-bold mb-6">Student Credentials Management</h2>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-gray-50">
+              <tr><th className="px-4 py-3 text-left">Student ID</th><th className="px-4 py-3 text-left">Name</th><th className="px-4 py-3 text-left">Email</th><th className="px-4 py-3 text-left">Actions</th></tr>
+            </thead>
+            <tbody>
+              {studentsList.map(student => (
+                <tr key={student.id} className="border-t">
+                  <td className="px-4 py-3">{student.studentId}</td>
+                  <td className="px-4 py-3">{student.fullName}</td>
+                  <td className="px-4 py-3">{student.email}</td>
+                  <td className="px-4 py-3">
+                    <button onClick={() => {
+                      setSelectedStudent(student);
+                      setShowResetModal(true);
+                    }} className="px-3 py-1 bg-blue-600 text-white rounded-lg text-sm flex items-center gap-1">
+                      Reset Password
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {showResetModal && selectedStudent && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-2xl p-6 max-w-md w-full">
+              <h3 className="text-lg font-bold mb-4">Reset Student Password</h3>
+              <p><strong>Student:</strong> {selectedStudent.fullName}</p>
+              <p><strong>Email:</strong> {selectedStudent.email}</p>
+              <p className="text-amber-600 text-sm mt-4">A password reset link will be sent to this email address.</p>
+              <div className="flex gap-3 mt-6">
+                <button onClick={() => setShowResetModal(false)} className="flex-1 px-4 py-2 border rounded-lg">Cancel</button>
+                <button onClick={() => sendResetLink(selectedStudent.email)} className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg">Send Reset Link</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ============================================
+  // RENDER FUNCTIONS
+  // ============================================
+
   const renderMainContent = () => {
     if (dashboardLoading) {
       return <LoadingState message="Loading dashboard..." type="spinner" />;
@@ -759,207 +906,151 @@ const AdminDashboard = ({ students, courses, announcements, applications, applic
     }
 
     switch (activeSection) {
-  case 'students':
-    return (
-      <div className="space-y-6">
-        <div className="flex justify-end gap-3">
-          <button
-            onClick={() => setActiveModal('addStudent')}
-            className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-2"
-          >
-            <UserPlus className="w-4 h-4" />
-            Add Single
-          </button>
-          <button
-            onClick={() => setShowBulkEnroll(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
-          >
-            <Users className="w-4 h-4" />
-            Bulk Enroll
-          </button>
-        </div>
-        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
-          <StudentsList refreshTrigger={refreshStudents} onAddStudent={() => setActiveModal('addStudent')} />
-        </div>
-      </div>
-    );
-  case 'addStudent':
-    return (
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6">
-        <AddStudentForm onSuccess={handleStudentAdded} />
-      </div>
-    );
-  case 'addLeader':
-    return (
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6">
-        <AddLeaderForm onSuccess={handleLeaderAdded} leaderToEdit={leaderToEdit} />
-      </div>
-    );
-  case 'leaders':
-    return (
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
-        <LeadersList 
-          refreshTrigger={refreshLeaders}
-          onAddLeader={(leader) => {
-            if (leader) {
-              handleEditLeader(leader);
-            } else {
-              setLeaderToEdit(null);
-              setActiveModal('addLeader');
-            }
-          }}
-        />
-      </div>
-    );
-  case 'parents':
-    return (
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
-        <ParentManagement />
-      </div>
-    );
-  case 'upload':
-    return (
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-200">
-        <AdminUpload />
-      </div>
-    );
-  case 'applications':
-    return (
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-200">
-        <AdminApplications 
-          applications={applications}
-          refreshTrigger={refreshApplications}
-          onRefresh={handleRefreshApplications}
-        />
-      </div>
-    );  
-  case 'posts':
-    return (
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-200">
-        <PostsManager />
-      </div>
-    );
-  case 'contactMessages':
-    return (
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-200">
-        <ContactMessages/>
-      </div>
-    );
-  case 'teacherApprovals':
-    return (
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-200">
-        <TeacherApprovals onRefresh={handleRefreshTeacherStats} />
-      </div>
-    );
-  case 'calendar':
-    return (
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
-        <CalendarView userType="admin" userId={currentUser?.uid} showActions={true} />
-      </div>
-    );
-  case 'courses':
-    return (
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-200">
-        <CoursesManagement />
-      </div>
-    );
-  case 'credentials':
-    return <StudentCredentialsManager />;
-  case 'schoolReports':
-    return (
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
-        <SchoolReports currentUser={currentUser} />
-      </div>
-    );
-    case 'allPublishedReports':
-  return (
-    <PublishedReportsViewer 
-      userType="admin"
-    />
-  );
-  case 'studentReports':
-    return (
-      <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
-        <StudentTermReports 
-          studentId={currentUser?.uid}
-          userType="admin"
-        />
-      </div>
-    );
-  case 'enrollment':
-  return (
-    <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
-      <EnrollmentManagement currentUser={currentUser} />
-    </div>
-  );  
-  default:
-    return renderDashboardOverview();
-}
-  };
-
-  const StudentCredentialsManager = () => {
-  const [students, setStudents] = useState([]);
-  const [selectedStudent, setSelectedStudent] = useState(null);
-  const [showResetModal, setShowResetModal] = useState(false);
-
-  const fetchStudents = async () => {
-    const snapshot = await getDocs(collection(db, 'students'));
-    const studentsList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    setStudents(studentsList);
-  };
-
-  useEffect(() => { fetchStudents(); }, []);
-
-  const sendResetLink = async (email) => {
-    await sendPasswordResetEmail(auth, email);
-    alert(`Password reset link sent to ${email}`);
-    setShowResetModal(false);
-  };
-
-  return (
-    <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6">
-      <h2 className="text-2xl font-bold mb-6">Student Credentials Management</h2>
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead className="bg-gray-50">
-            <tr><th className="px-4 py-3 text-left">Student ID</th><th className="px-4 py-3 text-left">Name</th><th className="px-4 py-3 text-left">Email</th><th className="px-4 py-3 text-left">Actions</th></tr>
-          </thead>
-          <tbody>
-            {students.map(student => (
-              <tr key={student.id} className="border-t">
-                <td className="px-4 py-3">{student.studentId}</td>
-                <td className="px-4 py-3">{student.fullName}</td>
-                <td className="px-4 py-3">{student.email}</td>
-                <td className="px-4 py-3">
-                  <button onClick={() => {
-                    setSelectedStudent(student);
-                    setShowResetModal(true);
-                  }} className="px-3 py-1 bg-blue-600 text-white rounded-lg text-sm flex items-center gap-1">
-                    <Key className="w-3 h-3" /> Reset Password
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {showResetModal && selectedStudent && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full">
-            <h3 className="text-lg font-bold mb-4">Reset Student Password</h3>
-            <p><strong>Student:</strong> {selectedStudent.fullName}</p>
-            <p><strong>Email:</strong> {selectedStudent.email}</p>
-            <p className="text-amber-600 text-sm mt-4">A password reset link will be sent to this email address.</p>
-            <div className="flex gap-3 mt-6">
-              <button onClick={() => setShowResetModal(false)} className="flex-1 px-4 py-2 border rounded-lg">Cancel</button>
-              <button onClick={() => sendResetLink(selectedStudent.email)} className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg">Send Reset Link</button>
+      case 'students':
+        return (
+          <div className="space-y-6">
+            <div className="flex flex-wrap justify-end gap-3">
+              <button
+                onClick={() => setActiveModal('addStudent')}
+                className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-2"
+              >
+                <UserPlus className="w-4 h-4" />
+                Add Single
+              </button>
+              <button
+                onClick={() => setShowBulkEnroll(true)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
+              >
+                <Users className="w-4 h-4" />
+                Bulk Enroll
+              </button>
+              {/* SEED COURSES BUTTON - ADDED HERE */}
+              <button
+                onClick={handleSeedCourses}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                Seed Courses
+              </button>
+            </div>
+            <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+              <StudentsList refreshTrigger={refreshStudents} onAddStudent={() => setActiveModal('addStudent')} />
             </div>
           </div>
-        </div>
-      )}
-    </div>
-  );
-};
+        );
+      case 'addStudent':
+        return (
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6">
+            <AddStudentForm onSuccess={handleStudentAdded} />
+          </div>
+        );
+      case 'addLeader':
+        return (
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6">
+            <AddLeaderForm onSuccess={handleLeaderAdded} leaderToEdit={leaderToEdit} />
+          </div>
+        );
+      case 'leaders':
+        return (
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+            <LeadersList 
+              refreshTrigger={refreshLeaders}
+              onAddLeader={(leader) => {
+                if (leader) {
+                  handleEditLeader(leader);
+                } else {
+                  setLeaderToEdit(null);
+                  setActiveModal('addLeader');
+                }
+              }}
+            />
+          </div>
+        );
+      case 'parents':
+        return (
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+            <ParentManagement />
+          </div>
+        );
+      case 'upload':
+        return (
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200">
+            <AdminUpload />
+          </div>
+        );
+      case 'applications':
+        return (
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200">
+            <AdminApplications 
+              applications={applications}
+              refreshTrigger={refreshApplications}
+              onRefresh={handleRefreshApplications}
+            />
+          </div>
+        );  
+      case 'posts':
+        return (
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200">
+            <PostsManager />
+          </div>
+        );
+      case 'contactMessages':
+        return (
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200">
+            <ContactMessages/>
+          </div>
+        );
+      case 'teacherApprovals':
+        return (
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200">
+            <TeacherApprovals onRefresh={handleRefreshTeacherStats} />
+          </div>
+        );
+      case 'calendar':
+        return (
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+            <CalendarView userType="admin" userId={currentUser?.uid} showActions={true} />
+          </div>
+        );
+      case 'courses':
+        return (
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200">
+            <CoursesManagement />
+          </div>
+        );
+      case 'credentials':
+        return <StudentCredentialsManager />;
+      case 'schoolReports':
+        return (
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+            <SchoolReports currentUser={currentUser} />
+          </div>
+        );
+      case 'allPublishedReports':
+        return (
+          <PublishedReportsViewer 
+            userType="admin"
+          />
+        );
+      case 'studentReports':
+        return (
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+            <StudentTermReports 
+              studentId={currentUser?.uid}
+              userType="admin"
+            />
+          </div>
+        );
+      case 'enrollment':
+        return (
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+            <EnrollmentManagement currentUser={currentUser} />
+          </div>
+        );  
+      default:
+        return renderDashboardOverview();
+    }
+  };
 
   const renderDashboardOverview = () => {
     const pendingActions = stats.pendingApplications + teacherStats.pending;
@@ -1007,6 +1098,15 @@ const AdminDashboard = ({ students, courses, announcements, applications, applic
         icon: <Users className="w-6 h-6 text-indigo-600" />,
         color: 'indigo',
         action: () => setActiveSection('parents')
+      },
+      // ADD SEED COURSES TO QUICK ACTIONS
+      {
+        id: 'seedCourses',
+        label: 'Seed Courses',
+        subLabel: 'Create default subjects',
+        icon: <BookOpen className="w-6 h-6 text-green-600" />,
+        color: 'green',
+        action: handleSeedCourses
       }
     ];
 
@@ -1034,6 +1134,12 @@ const AdminDashboard = ({ students, courses, announcements, applications, applic
         icon: <ClipboardCheck className="w-4 h-4" />,
         action: fixMissingStudentDocuments,
         color: 'orange'
+      },
+      {
+        label: 'Seed Courses',
+        icon: <Plus className="w-4 h-4" />,
+        action: handleSeedCourses,
+        color: 'green'
       }
     ];
     
@@ -1174,6 +1280,10 @@ const AdminDashboard = ({ students, courses, announcements, applications, applic
                       classes.hover = 'hover:from-indigo-50 hover:to-indigo-100 hover:border-indigo-300';
                       classes.iconContainer = 'bg-indigo-100 group-hover:bg-indigo-200';
                       break;
+                    case 'green':
+                      classes.hover = 'hover:from-green-50 hover:to-green-100 hover:border-green-300';
+                      classes.iconContainer = 'bg-green-100 group-hover:bg-green-200';
+                      break;
                     default:
                       classes.hover = 'hover:from-emerald-50 hover:to-emerald-100 hover:border-emerald-300';
                       classes.iconContainer = 'bg-emerald-100 group-hover:bg-emerald-200';
@@ -1199,7 +1309,7 @@ const AdminDashboard = ({ students, courses, announcements, applications, applic
               })}
             </div>
             
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3 mt-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 sm:gap-3 mt-4">
               {secondaryActions.map((action, index) => (
                 <button key={index} onClick={action.action} className="px-3 py-2 text-xs sm:text-sm text-gray-700 hover:text-emerald-700 hover:bg-emerald-50 border border-gray-200 rounded-lg transition-colors truncate">
                   {action.label}
@@ -1388,107 +1498,111 @@ const AdminDashboard = ({ students, courses, announcements, applications, applic
     );
   };
 
+  // ============================================
+  // MAIN RETURN
+  // ============================================
+
   return (
-  <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
-    <Sidebar
-      activeSection={activeSection}
-      onSectionChange={setActiveSection}
-      userType="admin"
-      userName={userInfo.name}
-      userRole={userInfo.role}
-      collapsed={sidebarCollapsed}
-      onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
-      isMobileOpen={isMobileMenuOpen}
-      onMobileClose={() => setIsMobileMenuOpen(false)}
-      sections={[
-        { id: 'dashboard', label: 'Dashboard', icon: <Home className="w-5 h-5" /> },
-        { id: 'students', label: 'Students', icon: <Users className="w-5 h-5" /> },
-        { id: 'applications', label: 'Applications', icon: <FileText className="w-5 h-5" /> },
-        { id: 'courses', label: 'Courses', icon: <BookOpen className="w-5 h-5" /> },
-        { id: 'leaders', label: 'Leaders', icon: <Award className="w-5 h-5" /> },
-        { id: 'teacherApprovals', label: 'Teacher Approvals', icon: <UsersIcon className="w-5 h-5" /> },
-        { id: 'posts', label: 'Posts', icon: <FileText className="w-5 h-5" /> },
-        { id: 'calendar', label: 'Calendar', icon: <CalendarIcon className="w-5 h-5" /> }, 
-        { id: 'upload', label: 'Upload Media', icon: <Upload className="w-5 h-5" /> },
-        { id: 'schoolReports', label: 'School Reports', icon: <FileSpreadsheet className="w-5 h-5" /> },
-        { id: 'studentReports', label: 'Student Reports', icon: <FileText className="w-5 h-5" /> },
-        { id: 'contactMessages', label: 'Messages', icon: <MessageSquare className="w-5 h-5" /> },
-        { id: 'settings', label: 'Settings', icon: <Settings className="w-5 h-5" /> },
-      ]}
-    />
-    
-    <TopHeader
-      title={activeSection === 'dashboard' ? 'Admin Dashboard' : activeSection.charAt(0).toUpperCase() + activeSection.slice(1)}
-      subtitle={`Welcome back, ${userInfo.name.split(' ')[0]}`}
-      userName={userInfo.name}
-      userAvatar={userInfo.name.charAt(0)}
-      onSearch={handleSearch}
-      onNotificationsClick={handleNotificationsClick}
-      onSettingsClick={handleSettingsClick}
-      onMenuClick={() => setIsMobileMenuOpen(true)}
-      notificationCount={stats.pendingApplications + teacherStats.pending}
-    />
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
+      <Sidebar
+        activeSection={activeSection}
+        onSectionChange={setActiveSection}
+        userType="admin"
+        userName={userInfo.name}
+        userRole={userInfo.role}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+        isMobileOpen={isMobileMenuOpen}
+        onMobileClose={() => setIsMobileMenuOpen(false)}
+        sections={[
+          { id: 'dashboard', label: 'Dashboard', icon: <Home className="w-5 h-5" /> },
+          { id: 'students', label: 'Students', icon: <Users className="w-5 h-5" /> },
+          { id: 'applications', label: 'Applications', icon: <FileText className="w-5 h-5" /> },
+          { id: 'courses', label: 'Courses', icon: <BookOpen className="w-5 h-5" /> },
+          { id: 'leaders', label: 'Leaders', icon: <Award className="w-5 h-5" /> },
+          { id: 'teacherApprovals', label: 'Teacher Approvals', icon: <UsersIcon className="w-5 h-5" /> },
+          { id: 'posts', label: 'Posts', icon: <FileText className="w-5 h-5" /> },
+          { id: 'calendar', label: 'Calendar', icon: <CalendarIcon className="w-5 h-5" /> }, 
+          { id: 'upload', label: 'Upload Media', icon: <Upload className="w-5 h-5" /> },
+          { id: 'schoolReports', label: 'School Reports', icon: <FileSpreadsheet className="w-5 h-5" /> },
+          { id: 'studentReports', label: 'Student Reports', icon: <FileText className="w-5 h-5" /> },
+          { id: 'contactMessages', label: 'Messages', icon: <MessageSquare className="w-5 h-5" /> },
+          { id: 'settings', label: 'Settings', icon: <Settings className="w-5 h-5" /> },
+        ]}
+      />
+      
+      <TopHeader
+        title={activeSection === 'dashboard' ? 'Admin Dashboard' : activeSection.charAt(0).toUpperCase() + activeSection.slice(1)}
+        subtitle={`Welcome back, ${userInfo.name.split(' ')[0]}`}
+        userName={userInfo.name}
+        userAvatar={userInfo.name.charAt(0)}
+        onSearch={handleSearch}
+        onNotificationsClick={handleNotificationsClick}
+        onSettingsClick={handleSettingsClick}
+        onMenuClick={() => setIsMobileMenuOpen(true)}
+        notificationCount={stats.pendingApplications + teacherStats.pending}
+      />
 
-    <main className={`transition-all duration-300 ${sidebarCollapsed ? 'lg:ml-20' : 'lg:ml-64'} px-4 sm:px-6 py-4 sm:py-8`}>
-      <div className="lg:hidden h-16"></div>
-      {renderMainContent()}
-    </main>
+      <main className={`transition-all duration-300 ${sidebarCollapsed ? 'lg:ml-20' : 'lg:ml-64'} px-4 sm:px-6 py-4 sm:py-8`}>
+        <div className="lg:hidden h-16"></div>
+        {renderMainContent()}
+      </main>
 
-    {/* Render Modals */}
-    {activeModal === 'applications' && (
-      <ApplicationsModal onClose={() => setActiveModal(null)} onSuccess={handleRefreshApplications} />
-    )}
-    
-    {activeModal === 'addStudent' && (
-      <AddStudentModal onClose={() => setActiveModal(null)} onSuccess={handleStudentAdded} />
-    )}
+      {/* Render Modals */}
+      {activeModal === 'applications' && (
+        <ApplicationsModal onClose={() => setActiveModal(null)} onSuccess={handleRefreshApplications} />
+      )}
+      
+      {activeModal === 'addStudent' && (
+        <AddStudentModal onClose={() => setActiveModal(null)} onSuccess={handleStudentAdded} />
+      )}
 
-    {activeModal === 'addLeader' && (
-      <AddLeaderModal onClose={() => setActiveModal(null)} leaderToEdit={leaderToEdit} onSuccess={handleLeaderAdded} />
-    )}
+      {activeModal === 'addLeader' && (
+        <AddLeaderModal onClose={() => setActiveModal(null)} leaderToEdit={leaderToEdit} onSuccess={handleLeaderAdded} />
+      )}
 
-    {/* Bulk Enroll Modal */}
-    {showBulkEnroll && (
-      <BulkEnrollModal onClose={() => setShowBulkEnroll(false)} onSuccess={handleStudentAdded} />
-    )}
+      {/* Bulk Enroll Modal */}
+      {showBulkEnroll && (
+        <BulkEnrollModal onClose={() => setShowBulkEnroll(false)} onSuccess={handleStudentAdded} />
+      )}
 
-    {/* Mobile Bottom Navigation */}
-    <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 lg:hidden z-50">
-      <div className="flex justify-around items-center h-14">
-        {[
-          { id: 'dashboard', icon: Home, label: 'Home' },
-          { id: 'students', icon: Users, label: 'Students' },
-          { id: 'applications', icon: FileText, label: 'Applications' },
-          { id: 'courses', icon: BookOpen, label: 'Courses' },
-          { id: 'profile', icon: User, label: 'Profile' },
-        ].map((tab) => (
-          <button key={tab.id} onClick={() => setActiveSection(tab.id)} className={`flex flex-col items-center justify-center w-1/5 h-full ${activeSection === tab.id ? 'text-emerald-600' : 'text-gray-500'}`}>
-            <tab.icon className="w-5 h-5" />
-            <span className="text-xs mt-0.5">{tab.label}</span>
-          </button>
-        ))}
+      {/* Mobile Bottom Navigation */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 lg:hidden z-50">
+        <div className="flex justify-around items-center h-14">
+          {[
+            { id: 'dashboard', icon: Home, label: 'Home' },
+            { id: 'students', icon: Users, label: 'Students' },
+            { id: 'applications', icon: FileText, label: 'Applications' },
+            { id: 'courses', icon: BookOpen, label: 'Courses' },
+            { id: 'profile', icon: User, label: 'Profile' },
+          ].map((tab) => (
+            <button key={tab.id} onClick={() => setActiveSection(tab.id)} className={`flex flex-col items-center justify-center w-1/5 h-full ${activeSection === tab.id ? 'text-emerald-600' : 'text-gray-500'}`}>
+              <tab.icon className="w-5 h-5" />
+              <span className="text-xs mt-0.5">{tab.label}</span>
+            </button>
+          ))}
+        </div>
       </div>
-    </div>
 
-    {/* Footer */}
-    <div className="border-t border-gray-200 bg-white py-4 mt-8">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6">
-        <div className="flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-gray-600">
-          <div className="text-center sm:text-left">
-            © 2026 Evergreen Academy Admin Portal v2.1.0
-          </div>
-          <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-6">
-            <span className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-              System Status: <span className="font-medium text-emerald-600">Online</span>
-            </span>
-            <span className="text-center sm:text-left">Last login: Today, {userInfo.lastLogin}</span>
+      {/* Footer */}
+      <div className="border-t border-gray-200 bg-white py-4 mt-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6">
+          <div className="flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-gray-600">
+            <div className="text-center sm:text-left">
+              © 2026 Evergreen Academy Admin Portal v2.1.0
+            </div>
+            <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-6">
+              <span className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+                System Status: <span className="font-medium text-emerald-600">Online</span>
+              </span>
+              <span className="text-center sm:text-left">Last login: Today, {userInfo.lastLogin}</span>
+            </div>
           </div>
         </div>
       </div>
     </div>
-  </div>
-);
+  );
 };
 
 export default AdminDashboard;

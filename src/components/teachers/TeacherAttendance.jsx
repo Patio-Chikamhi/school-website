@@ -1,5 +1,5 @@
-// components/teachers/TeacherAttendance.jsx - WITH DETAILED HISTORY MODAL
-import React, { useState, useEffect } from 'react';
+// components/teachers/TeacherAttendance.jsx - OPTIMIZED
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Calendar, Users, CheckCircle, XCircle, Clock, 
   Search, Filter, Download, ChevronDown, Loader,
@@ -9,7 +9,7 @@ import {
 import { db } from '../../firebase/config';
 import { 
   collection, query, where, getDocs, addDoc, 
-  updateDoc, doc, serverTimestamp, orderBy, limit, setDoc, getDoc
+  updateDoc, doc, serverTimestamp, orderBy, limit, setDoc, getDoc, writeBatch
 } from 'firebase/firestore';
 
 const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse }) => {
@@ -25,6 +25,10 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
 
+  // ✅ Refs to prevent duplicate fetches
+  const studentsLoadingRef = useRef(false);
+  const attendanceLoadingRef = useRef(false);
+
   // Load students when course changes
   useEffect(() => {
     if (selectedCourse) {
@@ -34,7 +38,7 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
     }
   }, [selectedCourse]);
 
-  // Load existing attendance for selected date
+  // Load existing attendance for selected date — batched
   useEffect(() => {
     if (selectedCourse && selectedDate && students.length > 0) {
       fetchAttendanceForDate();
@@ -68,39 +72,52 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
     }
   };
 
+  // ✅ OPTIMIZED: Batched query instead of sequential getDoc
   const fetchAttendanceForDate = async () => {
-    if (!selectedCourse) return;
-    
+    if (!selectedCourse || students.length === 0) return;
+    if (attendanceLoadingRef.current) return;
+    attendanceLoadingRef.current = true;
+
     try {
-      const updatedStudents = [...students];
-      let hasExisting = false;
-      
-      for (let i = 0; i < updatedStudents.length; i++) {
-        const student = updatedStudents[i];
-        const attendanceId = `${selectedCourse}_${student.studentId}_${selectedDate}`;
-        const attendanceRef = doc(db, 'attendance', attendanceId);
-        const attendanceDoc = await getDoc(attendanceRef);
-        
-        if (attendanceDoc.exists()) {
-          hasExisting = true;
-          const data = attendanceDoc.data();
-          updatedStudents[i] = {
-            ...student,
+      const studentIds = students.map(s => s.studentId).filter(Boolean);
+      const attendanceMap = {};
+
+      // Batch reads — 30 students per query
+      for (let i = 0; i < studentIds.length; i += 30) {
+        const batch = studentIds.slice(i, i + 30);
+        const attendanceQuery = query(
+          collection(db, 'attendance'),
+          where('courseId', '==', selectedCourse),
+          where('date', '==', selectedDate),
+          where('studentId', 'in', batch)
+        );
+        const snapshot = await getDocs(attendanceQuery);
+        snapshot.forEach(d => {
+          const data = d.data();
+          attendanceMap[data.studentId] = {
             status: data.status,
             remarks: data.remarks || ''
           };
-        }
+        });
       }
-      
-      if (hasExisting) {
-        setStudents(updatedStudents);
-        console.log(`✅ Loaded existing attendance for ${updatedStudents.filter(s => s.status !== 'present').length} students`);
-      }
+
+      // Merge with students
+      const updatedStudents = students.map(student => ({
+        ...student,
+        status: attendanceMap[student.studentId]?.status || student.status,
+        remarks: attendanceMap[student.studentId]?.remarks || student.remarks || ''
+      }));
+
+      setStudents(updatedStudents);
+      console.log(`✅ Loaded existing attendance for ${Object.keys(attendanceMap).length} students`);
     } catch (error) {
       console.error('Error fetching attendance:', error);
+    } finally {
+      attendanceLoadingRef.current = false;
     }
   };
 
+  // ✅ OPTIMIZED: Batched history fetch
   const fetchAttendanceHistory = async () => {
     if (!selectedCourse) return;
     
@@ -118,19 +135,21 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
       
       const recordsByDate = new Map();
       
-      for (const studentId of studentIds) {
+      // ✅ Batch queries — 30 students per query
+      for (let i = 0; i < studentIds.length; i += 30) {
+        const batch = studentIds.slice(i, i + 30);
         const attendanceQuery = query(
           collection(db, 'attendance'),
-          where('studentId', '==', studentId),
           where('courseId', '==', selectedCourse),
+          where('studentId', 'in', batch),
           orderBy('date', 'desc'),
-          limit(50)
+          limit(200)
         );
         
         const snapshot = await getDocs(attendanceQuery);
         
-        snapshot.forEach(doc => {
-          const data = doc.data();
+        snapshot.forEach(d => {
+          const data = d.data();
           const dateKey = data.date;
           
           if (!recordsByDate.has(dateKey)) {
@@ -148,15 +167,19 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
             status: data.status,
             remarks: data.remarks || ''
           });
-          record.summary[data.status]++;
+          
+          if (record.summary[data.status] !== undefined) {
+            record.summary[data.status]++;
+          }
           record.summary.total++;
         });
       }
       
-      const records = Array.from(recordsByDate.values()).sort((a, b) => new Date(b.date) - new Date(a.date));
+      const records = Array.from(recordsByDate.values())
+        .sort((a, b) => new Date(b.date) - new Date(a.date));
+      
       setAttendanceRecords(records);
       console.log(`📋 Loaded ${records.length} attendance records`);
-      
     } catch (error) {
       console.error('Error fetching attendance history:', error);
       setError('Failed to load attendance history');
@@ -185,6 +208,7 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
     );
   };
 
+  // ✅ OPTIMIZED: Use writeBatch instead of sequential setDoc
   const saveAttendance = async () => {
     if (!selectedCourse) {
       alert('Please select a course');
@@ -201,14 +225,14 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
     
     try {
       const course = teacherCourses.find(c => c.id === selectedCourse);
-      let savedCount = 0;
+      const batch = writeBatch(db);
       
       for (const student of students) {
         const attendanceId = `${selectedCourse}_${student.studentId}_${selectedDate}`;
         const attendanceRef = doc(db, 'attendance', attendanceId);
         
-        await setDoc(attendanceRef, {
-          attendanceId: attendanceId,
+        batch.set(attendanceRef, {
+          attendanceId,
           studentId: student.studentId,
           studentName: student.studentName || student.fullName,
           courseId: selectedCourse,
@@ -216,15 +240,16 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
           date: selectedDate,
           status: student.status,
           remarks: student.remarks || '',
-          teacherId: teacherId,
+          teacherId,
           teacherName: course?.teacherName || 'Teacher',
           recordedAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
-        savedCount++;
       }
       
-      alert(`✅ Attendance saved for ${savedCount} student(s)!`);
+      await batch.commit();
+      
+      alert(`✅ Attendance saved for ${students.length} student(s)!`);
       
       if (showHistory) {
         await fetchAttendanceHistory();
@@ -258,19 +283,23 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
     return badges[status] || 'bg-gray-100 text-gray-800';
   };
 
-  const filteredStudents = students.filter(student => 
-    student.studentName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    student.fullName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    student.studentId?.toLowerCase().includes(searchTerm)
-  );
+  // ✅ Memoize filtered students
+  const filteredStudents = useMemo(() => {
+    return students.filter(student => 
+      student.studentName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      student.fullName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      student.studentId?.toLowerCase().includes(searchTerm)
+    );
+  }, [students, searchTerm]);
 
-  const summary = {
+  // ✅ Memoize summary
+  const summary = useMemo(() => ({
     present: students.filter(s => s.status === 'present').length,
     absent: students.filter(s => s.status === 'absent').length,
     late: students.filter(s => s.status === 'late').length,
     excused: students.filter(s => s.status === 'excused').length,
     total: students.length
-  };
+  }), [students]);
 
   // Details Modal Component
   const AttendanceDetailsModal = ({ record, onClose }) => {
@@ -282,7 +311,6 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
         <div className="bg-white rounded-xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
-          {/* Modal Header */}
           <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
             <div>
               <h2 className="text-xl font-bold text-gray-900">Attendance Details</h2>
@@ -295,17 +323,12 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
                 })}
               </p>
             </div>
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-            >
+            <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
               <X className="w-6 h-6 text-gray-400" />
             </button>
           </div>
 
-          {/* Modal Content */}
           <div className="p-6 overflow-y-auto max-h-[calc(90vh-120px)] space-y-6">
-            {/* Summary Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="bg-green-50 p-4 rounded-lg border border-green-200 text-center">
                 <CheckCircle className="w-6 h-6 text-green-600 mx-auto mb-2" />
@@ -376,7 +399,6 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
                       <tr>
                         <th className="text-left py-2 px-4 text-sm font-medium">Student Name</th>
                         <th className="text-left py-2 px-4 text-sm font-medium">Student ID</th>
-                        <th className="text-left py-2 px-4 text-sm font-medium">Status</th>
                         <th className="text-left py-2 px-4 text-sm font-medium">Remarks</th>
                       </tr>
                     </thead>
@@ -385,11 +407,6 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
                         <tr key={idx} className="hover:bg-red-100/50">
                           <td className="py-2 px-4 text-sm">{student.studentName}</td>
                           <td className="py-2 px-4 text-sm text-gray-600">{student.studentId}</td>
-                          <td className="py-2 px-4">
-                            <span className="px-2 py-1 rounded-full text-xs font-medium bg-red-200 text-red-800">
-                              Absent
-                            </span>
-                          </td>
                           <td className="py-2 px-4 text-sm text-gray-600">{student.remarks || '-'}</td>
                         </tr>
                       ))}
@@ -412,7 +429,6 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
                       <tr>
                         <th className="text-left py-2 px-4 text-sm font-medium">Student Name</th>
                         <th className="text-left py-2 px-4 text-sm font-medium">Student ID</th>
-                        <th className="text-left py-2 px-4 text-sm font-medium">Status</th>
                         <th className="text-left py-2 px-4 text-sm font-medium">Remarks</th>
                       </tr>
                     </thead>
@@ -421,11 +437,6 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
                         <tr key={idx} className="hover:bg-yellow-100/50">
                           <td className="py-2 px-4 text-sm">{student.studentName}</td>
                           <td className="py-2 px-4 text-sm text-gray-600">{student.studentId}</td>
-                          <td className="py-2 px-4">
-                            <span className="px-2 py-1 rounded-full text-xs font-medium bg-yellow-200 text-yellow-800">
-                              Late
-                            </span>
-                          </td>
                           <td className="py-2 px-4 text-sm text-gray-600">{student.remarks || '-'}</td>
                         </tr>
                       ))}
@@ -448,7 +459,6 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
                       <tr>
                         <th className="text-left py-2 px-4 text-sm font-medium">Student Name</th>
                         <th className="text-left py-2 px-4 text-sm font-medium">Student ID</th>
-                        <th className="text-left py-2 px-4 text-sm font-medium">Status</th>
                         <th className="text-left py-2 px-4 text-sm font-medium">Remarks</th>
                       </tr>
                     </thead>
@@ -457,11 +467,6 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
                         <tr key={idx} className="hover:bg-blue-100/50">
                           <td className="py-2 px-4 text-sm">{student.studentName}</td>
                           <td className="py-2 px-4 text-sm text-gray-600">{student.studentId}</td>
-                          <td className="py-2 px-4">
-                            <span className="px-2 py-1 rounded-full text-xs font-medium bg-blue-200 text-blue-800">
-                              Excused
-                            </span>
-                          </td>
                           <td className="py-2 px-4 text-sm text-gray-600">{student.remarks || '-'}</td>
                         </tr>
                       ))}
@@ -472,7 +477,6 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
             )}
           </div>
 
-          {/* Modal Footer */}
           <div className="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-4">
             <button
               onClick={onClose}
@@ -500,7 +504,6 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Attendance Management</h2>
@@ -549,7 +552,7 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
               <option value="">Select a course...</option>
               {teacherCourses.map(course => (
                 <option key={course.id} value={course.id}>
-                  {course.courseName} - Grade {course.grade}
+                  {course.courseName} - {course.grade}
                 </option>
               ))}
             </select>
@@ -579,9 +582,7 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
       </div>
 
       {!showHistory ? (
-        // Take Attendance View (same as before)
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          {/* Summary Stats */}
           <div className="grid grid-cols-4 gap-4 p-6 bg-gray-50 border-b border-gray-200">
             <div className="text-center">
               <div className="text-2xl font-bold text-green-600">{summary.present}</div>
@@ -639,7 +640,9 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
           ) : selectedCourse && students.length > 0 && filteredStudents.length === 0 ? (
             <div className="p-12 text-center">
               <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <p className="text-gray-500">{searchTerm ? 'No students match your search' : 'No students found'}</p>
+              <p className="text-gray-500">
+                {searchTerm ? 'No students match your search' : 'No students found'}
+              </p>
             </div>
           ) : selectedCourse && students.length > 0 && (
             <div className="divide-y divide-gray-100">
@@ -747,7 +750,6 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
           )}
         </div>
       ) : (
-        // Attendance History View with Details Modal
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <div className="p-4 border-b border-gray-200 flex justify-between items-center">
             <h3 className="font-semibold text-gray-900">Attendance History</h3>
@@ -829,16 +831,19 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
                     </button>
                   </div>
                   
-                  {/* Attendance Rate Bar */}
                   <div className="mt-3">
                     <div className="w-full bg-gray-200 rounded-full h-2">
                       <div 
                         className="bg-green-500 h-2 rounded-full" 
-                        style={{ width: `${(record.summary?.present / Math.max(record.summary?.total, 1)) * 100}%` }}
+                        style={{ 
+                          width: `${(record.summary?.present / Math.max(record.summary?.total, 1)) * 100}%` 
+                        }}
                       ></div>
                     </div>
                     <div className="flex justify-between mt-1 text-xs text-gray-500">
-                      <span>{Math.round((record.summary?.present / Math.max(record.summary?.total, 1)) * 100)}% attendance</span>
+                      <span>
+                        {Math.round((record.summary?.present / Math.max(record.summary?.total, 1)) * 100)}% attendance
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -848,7 +853,6 @@ const TeacherAttendance = ({ teacherId, teacherCourses, enrolledStudentsByCourse
         </div>
       )}
 
-      {/* Details Modal */}
       {showDetailsModal && selectedRecord && (
         <AttendanceDetailsModal 
           record={selectedRecord} 

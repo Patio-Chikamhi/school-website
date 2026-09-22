@@ -1,12 +1,31 @@
-// src/components/teachers/TeacherReports.jsx
+// src/components/teachers/TeacherReports.jsx - FIXED
 import React, { useState, useEffect } from 'react';
 import {
   FileText, Users, BookOpen, Download, Eye, Calendar,
   Printer, ChevronDown, Search, Filter, Award, TrendingUp,
   CheckCircle, XCircle, Clock, Loader, Send, Mail
 } from 'lucide-react';
-import { collection, query, where, getDocs, doc, getDoc, addDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { db } from '../../firebase/config';
+import { collection, query, where, getDocs, doc, getDoc, addDoc, serverTimestamp, updateDoc, setDoc } from 'firebase/firestore';
+import { db, auth } from '../../firebase/config';
+
+// ============================================
+// ZIMSEC 5-LETTER GRADING SCALE
+// ============================================
+const getLetterGrade = (percentage) => {
+  if (percentage >= 75) return 'A';
+  if (percentage >= 65) return 'B';
+  if (percentage >= 50) return 'C';
+  if (percentage >= 45) return 'D';
+  return 'F';
+};
+
+const getGradeColor = (percentage) => {
+  if (percentage >= 75) return 'text-emerald-600';
+  if (percentage >= 65) return 'text-blue-600';
+  if (percentage >= 50) return 'text-yellow-600';
+  if (percentage >= 45) return 'text-orange-600';
+  return 'text-red-600';
+};
 
 const TeacherReports = ({ teacherId, teacherCourses, enrolledStudentsByCourse }) => {
   const [selectedCourse, setSelectedCourse] = useState('');
@@ -26,6 +45,8 @@ const TeacherReports = ({ teacherId, teacherCourses, enrolledStudentsByCourse })
   useEffect(() => {
     if (selectedCourse && enrolledStudentsByCourse[selectedCourse]) {
       setStudents(enrolledStudentsByCourse[selectedCourse] || []);
+    } else {
+      setStudents([]);
     }
   }, [selectedCourse, enrolledStudentsByCourse]);
 
@@ -45,11 +66,17 @@ const TeacherReports = ({ teacherId, teacherCourses, enrolledStudentsByCourse })
         where('term', '==', selectedTerm)
       );
       const snapshot = await getDocs(gradesQuery);
-      const gradesData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        gradedAt: doc.data().gradedAt?.toDate?.() || new Date(doc.data().gradedAt)
-      }));
+      const gradesData = snapshot.docs.map(doc => {
+        const data = doc.data();
+        const percentage = data.percentage || ((data.score / data.maxScore) * 100);
+        return {
+          id: doc.id,
+          ...data,
+          percentage,
+          letterGrade: getLetterGrade(percentage),
+          gradedAt: data.gradedAt?.toDate?.() || new Date(data.gradedAt)
+        };
+      });
       setGrades(gradesData);
     } catch (error) {
       console.error('Error fetching grades:', error);
@@ -60,28 +87,23 @@ const TeacherReports = ({ teacherId, teacherCourses, enrolledStudentsByCourse })
 
   const calculateStudentAverage = () => {
     if (grades.length === 0) return { average: 0, letter: 'N/A', color: 'gray' };
-    
+
     const totalPercentage = grades.reduce((sum, g) => sum + (g.percentage || 0), 0);
     const average = Math.round(totalPercentage / grades.length);
-    
-    let letter = 'F', color = 'red';
-    if (average >= 90) { letter = 'A'; color = 'emerald'; }
-    else if (average >= 80) { letter = 'B'; color = 'blue'; }
-    else if (average >= 70) { letter = 'C'; color = 'yellow'; }
-    else if (average >= 60) { letter = 'D'; color = 'orange'; }
-    
-    return { average, letter, color };
+
+    return {
+      average,
+      letter: getLetterGrade(average),
+      color: getGradeColor(average).replace('text-', '')
+    };
   };
 
   const getGradeDistribution = () => {
     const distribution = { A: 0, B: 0, C: 0, D: 0, F: 0 };
     grades.forEach(grade => {
       const percentage = grade.percentage || 0;
-      if (percentage >= 90) distribution.A++;
-      else if (percentage >= 80) distribution.B++;
-      else if (percentage >= 70) distribution.C++;
-      else if (percentage >= 60) distribution.D++;
-      else distribution.F++;
+      const letter = getLetterGrade(percentage);
+      distribution[letter]++;
     });
     return distribution;
   };
@@ -92,20 +114,38 @@ const TeacherReports = ({ teacherId, teacherCourses, enrolledStudentsByCourse })
       return;
     }
 
+    if (grades.length === 0) {
+      alert('No grades recorded for this student in this course/term');
+      return;
+    }
+
     setGenerating(true);
     try {
       const stats = calculateStudentAverage();
       const distribution = getGradeDistribution();
-      
+      const course = teacherCourses.find(c => c.id === selectedCourse);
+
+      const teacherName = auth.currentUser?.displayName ||
+                          auth.currentUser?.email?.split('@')[0] ||
+                          'Teacher';
+
       const reportData = {
+        // ✅ Standardized fields for termReports collection
+        reportId: `single_${selectedTerm}_${new Date().getFullYear()}_${selectedStudent.studentId}_${selectedCourse}_${Date.now()}`,
+        reportType: 'single-subject',   // ← Differentiate from termReports
         studentId: selectedStudent.studentId,
         studentName: selectedStudent.studentName || selectedStudent.fullName,
         courseId: selectedCourse,
-        courseName: teacherCourses.find(c => c.id === selectedCourse)?.courseName || '',
+        courseName: course?.courseName || '',
+        courseGrade: course?.grade || '',
         term: selectedTerm,
-        academicYear: academicYear,
+        academicYear: new Date().getFullYear(),
+        academicYearString: academicYear,
         teacherId: teacherId,
-        teacherName: 'Teacher',
+        teacherName: teacherName,
+        generatedBy: teacherName,       // ✅ Match viewer query
+        generatedById: teacherId,       // ✅ For "my reports" filtering
+        generatedAt: serverTimestamp(),
         grades: grades.map(g => ({
           assignmentId: g.assignmentId,
           assignmentName: g.assignmentName,
@@ -121,16 +161,15 @@ const TeacherReports = ({ teacherId, teacherCourses, enrolledStudentsByCourse })
           average: stats.average,
           letterGrade: stats.letter,
           totalAssignments: grades.length,
-          completedAssignments: grades.filter(g => g.score).length,
+          completedAssignments: grades.filter(g => g.score != null).length,
           highestScore: Math.max(...grades.map(g => g.percentage || 0), 0),
-          lowestScore: Math.min(...grades.map(g => g.percentage || 100), 100),
+          lowestScore: Math.min(...grades.map(g => g.percentage != null ? g.percentage : 100), 100),
           gradeDistribution: distribution
         },
         teacherComments: teacherComments,
-        generatedAt: new Date(),
         status: 'draft'
       };
-      
+
       setGeneratedReport(reportData);
       setShowReportModal(true);
     } catch (error) {
@@ -141,30 +180,61 @@ const TeacherReports = ({ teacherId, teacherCourses, enrolledStudentsByCourse })
     }
   };
 
+  // ✅ Silent save/publish (no per-action alerts — modal handles it)
   const saveAndPublishReport = async () => {
     if (!generatedReport) return;
-    
+
     try {
-      const reportRef = await addDoc(collection(db, 'reports'), {
+      const reportRef = doc(db, 'termReports', generatedReport.reportId);
+      const reportDoc = await getDoc(reportRef);
+
+      const reportData = {
         ...generatedReport,
         status: 'published',
         publishedAt: serverTimestamp(),
-        publishedBy: teacherId
-      });
-      
-      // Also save to student's subcollection
-      const studentReportRef = doc(db, 'students', generatedReport.studentId, 'reports', reportRef.id);
-      await updateDoc(studentReportRef, {
-        ...generatedReport,
-        reportId: reportRef.id
-      });
-      
-      alert('Report published successfully!');
-      setShowReportModal(false);
-      setTeacherComments('');
+        publishedBy: teacherId,
+        updatedAt: serverTimestamp()
+      };
+
+      if (reportDoc.exists()) {
+        await updateDoc(reportRef, reportData);
+      } else {
+        await setDoc(reportRef, {
+          ...reportData,
+          createdAt: serverTimestamp()
+        });
+      }
+
+      return true;
     } catch (error) {
-      console.error('Error saving report:', error);
-      alert('Error saving report');
+      console.error('Error publishing report:', error);
+      throw error;
+    }
+  };
+
+  const saveDraft = async () => {
+    if (!generatedReport) return;
+    try {
+      const reportRef = doc(db, 'termReports', generatedReport.reportId);
+      const reportDoc = await getDoc(reportRef);
+
+      const reportData = {
+        ...generatedReport,
+        status: 'draft',
+        updatedAt: serverTimestamp()
+      };
+
+      if (reportDoc.exists()) {
+        await updateDoc(reportRef, reportData);
+      } else {
+        await setDoc(reportRef, {
+          ...reportData,
+          createdAt: serverTimestamp()
+        });
+      }
+    } catch (error) {
+      console.error('Error saving draft:', error);
+      throw error;
     }
   };
 
@@ -187,16 +257,13 @@ const TeacherReports = ({ teacherId, teacherCourses, enrolledStudentsByCourse })
           .summary { margin: 20px 0; }
           .average { font-size: 24px; font-weight: bold; }
           .comments { margin-top: 30px; padding: 15px; background: #fef3c7; border-radius: 8px; }
-          @media print {
-            body { margin: 0; }
-            .no-print { display: none; }
-          }
+          @media print { body { margin: 0; } .no-print { display: none; } }
         </style>
       </head>
       <body>
         <div class="header">
           <h1 class="school-name">Evergreen Academy</h1>
-          <p class="report-title">Academic Progress Report - ${generatedReport?.term} ${generatedReport?.academicYear}</p>
+          <p class="report-title">Single Subject Report - ${generatedReport?.term} ${generatedReport?.academicYearString}</p>
         </div>
         <div class="student-info">
           <p><strong>Student:</strong> ${generatedReport?.studentName}</p>
@@ -230,7 +297,9 @@ const TeacherReports = ({ teacherId, teacherCourses, enrolledStudentsByCourse })
             <p>${generatedReport.teacherComments}</p>
           </div>
         ` : ''}
-        <p style="margin-top: 40px; text-align: center; font-size: 12px;">Generated on ${new Date().toLocaleDateString()}</p>
+        <p style="margin-top: 40px; text-align: center; font-size: 12px;">
+          Generated on ${new Date().toLocaleDateString()}
+        </p>
       </body>
       </html>
     `);
@@ -243,8 +312,10 @@ const TeacherReports = ({ teacherId, teacherCourses, enrolledStudentsByCourse })
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Student Reports</h1>
-        <p className="text-gray-600 mt-1">Generate detailed academic reports for students</p>
+        <h1 className="text-2xl font-bold text-gray-900">Single Subject Report</h1>
+        <p className="text-gray-600 mt-1">
+          Generate a detailed report card for one student in one course
+        </p>
       </div>
 
       {/* Selection Panel */}
@@ -254,7 +325,10 @@ const TeacherReports = ({ teacherId, teacherCourses, enrolledStudentsByCourse })
             <label className="block text-sm font-medium text-gray-700 mb-2">Select Course</label>
             <select
               value={selectedCourse}
-              onChange={(e) => setSelectedCourse(e.target.value)}
+              onChange={(e) => {
+                setSelectedCourse(e.target.value);
+                setSelectedStudent(null);
+              }}
               className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             >
               <option value="">Choose a course</option>
@@ -293,7 +367,9 @@ const TeacherReports = ({ teacherId, teacherCourses, enrolledStudentsByCourse })
               onChange={(e) => setSelectedTerm(e.target.value)}
               className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             >
-              {terms.map(term => <option key={term} value={term}>{term}</option>)}
+              {terms.map(term => (
+                <option key={term} value={term}>{term}</option>
+              ))}
             </select>
           </div>
         </div>
@@ -307,9 +383,13 @@ const TeacherReports = ({ teacherId, teacherCourses, enrolledStudentsByCourse })
           </h3>
 
           {loading ? (
-            <div className="text-center py-8"><Loader className="w-8 h-8 animate-spin mx-auto" /></div>
+            <div className="text-center py-8">
+              <Loader className="w-8 h-8 animate-spin mx-auto" />
+            </div>
           ) : grades.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">No grades recorded for this student</div>
+            <div className="text-center py-8 text-gray-500">
+              No grades recorded for this student in {selectedTerm}
+            </div>
           ) : (
             <>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
@@ -336,7 +416,13 @@ const TeacherReports = ({ teacherId, teacherCourses, enrolledStudentsByCourse })
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-gray-50">
-                    <tr><th className="px-4 py-3 text-left">Assignment</th><th className="px-4 py-3 text-left">Type</th><th className="px-4 py-3 text-center">Score</th><th className="px-4 py-3 text-center">%</th><th className="px-4 py-3 text-center">Grade</th></tr>
+                    <tr>
+                      <th className="px-4 py-3 text-left">Assignment</th>
+                      <th className="px-4 py-3 text-left">Type</th>
+                      <th className="px-4 py-3 text-center">Score</th>
+                      <th className="px-4 py-3 text-center">%</th>
+                      <th className="px-4 py-3 text-center">Grade</th>
+                    </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {grades.map(grade => (
@@ -353,7 +439,9 @@ const TeacherReports = ({ teacherId, teacherCourses, enrolledStudentsByCourse })
               </div>
 
               <div className="mt-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Teacher Comments</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Teacher Comments
+                </label>
                 <textarea
                   value={teacherComments}
                   onChange={(e) => setTeacherComments(e.target.value)}
@@ -367,7 +455,7 @@ const TeacherReports = ({ teacherId, teacherCourses, enrolledStudentsByCourse })
                 <button
                   onClick={generateReport}
                   disabled={generating}
-                  className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
+                  className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 disabled:opacity-50"
                 >
                   {generating ? <Loader className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
                   Generate Report
@@ -381,45 +469,89 @@ const TeacherReports = ({ teacherId, teacherCourses, enrolledStudentsByCourse })
       {/* Report Modal */}
       {showReportModal && generatedReport && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center">
-              <h2 className="text-xl font-bold text-gray-900">Student Report Card</h2>
-              <button onClick={() => setShowReportModal(false)} className="p-2 hover:bg-gray-100 rounded-lg">
+          <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+            <div className="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center flex-shrink-0">
+              <h2 className="text-xl font-bold text-gray-900">Single Subject Report Card</h2>
+              <button
+                onClick={() => setShowReportModal(false)}
+                className="p-2 hover:bg-gray-100 rounded-lg"
+              >
                 <XCircle className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-6">
+            <div className="p-6 overflow-y-auto flex-1">
               <div className="text-center mb-8">
                 <h1 className="text-2xl font-bold text-emerald-600">Evergreen Academy</h1>
                 <p className="text-gray-500">Academic Progress Report</p>
-                <p className="text-gray-500">{generatedReport.term} {generatedReport.academicYear}</p>
+                <p className="text-gray-500">
+                  {generatedReport.term} {generatedReport.academicYearString}
+                </p>
               </div>
 
               <div className="bg-gray-50 p-4 rounded-lg mb-6">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div><p className="text-sm text-gray-500">Student Name</p><p className="font-semibold">{generatedReport.studentName}</p></div>
-                  <div><p className="text-sm text-gray-500">Course</p><p className="font-semibold">{generatedReport.courseName}</p></div>
-                  <div><p className="text-sm text-gray-500">Teacher</p><p className="font-semibold">{generatedReport.teacherName}</p></div>
-                  <div><p className="text-sm text-gray-500">Report Date</p><p className="font-semibold">{new Date().toLocaleDateString()}</p></div>
+                  <div>
+                    <p className="text-sm text-gray-500">Student Name</p>
+                    <p className="font-semibold">{generatedReport.studentName}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Course</p>
+                    <p className="font-semibold">{generatedReport.courseName}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Teacher</p>
+                    <p className="font-semibold">{generatedReport.teacherName}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Report Date</p>
+                    <p className="font-semibold">{new Date().toLocaleDateString()}</p>
+                  </div>
                 </div>
               </div>
 
               <table className="w-full mb-6 border-collapse">
                 <thead className="bg-gray-100">
-                  <tr><th className="p-3 text-left">Assignment</th><th className="p-3 text-left">Type</th><th className="p-3 text-center">Score</th><th className="p-3 text-center">%</th><th className="p-3 text-center">Grade</th></tr>
+                  <tr>
+                    <th className="p-3 text-left">Assignment</th>
+                    <th className="p-3 text-left">Type</th>
+                    <th className="p-3 text-center">Score</th>
+                    <th className="p-3 text-center">%</th>
+                    <th className="p-3 text-center">Grade</th>
+                  </tr>
                 </thead>
                 <tbody className="divide-y">
                   {generatedReport.grades.map((g, idx) => (
-                    <tr key={idx}><td className="p-3">{g.assignmentName}</td><td className="p-3 capitalize">{g.assignmentType}</td><td className="p-3 text-center">{g.score}/{g.maxScore}</td><td className="p-3 text-center">{g.percentage}%</td><td className="p-3 text-center font-bold">{g.letterGrade}</td></tr>
+                    <tr key={idx}>
+                      <td className="p-3">{g.assignmentName}</td>
+                      <td className="p-3 capitalize">{g.assignmentType}</td>
+                      <td className="p-3 text-center">{g.score}/{g.maxScore}</td>
+                      <td className="p-3 text-center">{g.percentage}%</td>
+                      <td className="p-3 text-center font-bold">{g.letterGrade}</td>
+                    </tr>
                   ))}
                 </tbody>
               </table>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                <div className="bg-emerald-50 p-4 rounded-lg text-center"><div className="text-2xl font-bold text-emerald-600">{generatedReport.summary.average}%</div><div className="text-sm text-gray-600">Overall Average</div></div>
-                <div className="bg-blue-50 p-4 rounded-lg text-center"><div className="text-2xl font-bold text-blue-600">{generatedReport.summary.letterGrade}</div><div className="text-sm text-gray-600">Letter Grade</div></div>
-                <div className="bg-purple-50 p-4 rounded-lg text-center"><div className="text-2xl font-bold text-purple-600">{generatedReport.summary.completedAssignments}/{generatedReport.summary.totalAssignments}</div><div className="text-sm text-gray-600">Assignments Completed</div></div>
+                <div className="bg-emerald-50 p-4 rounded-lg text-center">
+                  <div className="text-2xl font-bold text-emerald-600">
+                    {generatedReport.summary.average}%
+                  </div>
+                  <div className="text-sm text-gray-600">Overall Average</div>
+                </div>
+                <div className="bg-blue-50 p-4 rounded-lg text-center">
+                  <div className="text-2xl font-bold text-blue-600">
+                    {generatedReport.summary.letterGrade}
+                  </div>
+                  <div className="text-sm text-gray-600">Letter Grade</div>
+                </div>
+                <div className="bg-purple-50 p-4 rounded-lg text-center">
+                  <div className="text-2xl font-bold text-purple-600">
+                    {generatedReport.summary.completedAssignments}/{generatedReport.summary.totalAssignments}
+                  </div>
+                  <div className="text-sm text-gray-600">Assignments Completed</div>
+                </div>
               </div>
 
               {generatedReport.teacherComments && (
@@ -428,11 +560,47 @@ const TeacherReports = ({ teacherId, teacherCourses, enrolledStudentsByCourse })
                   <p className="text-yellow-700">{generatedReport.teacherComments}</p>
                 </div>
               )}
+            </div>
 
-              <div className="flex justify-end gap-3 pt-4 border-t">
-                <button onClick={printReport} className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2"><Printer className="w-4 h-4" />Print</button>
-                <button onClick={saveAndPublishReport} className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-2"><Send className="w-4 h-4" />Publish Report</button>
-              </div>
+            <div className="bg-white border-t border-gray-200 px-6 py-4 flex justify-end gap-3 flex-shrink-0">
+              <button
+                onClick={printReport}
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2"
+              >
+                <Printer className="w-4 h-4" />
+                Print
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    await saveDraft();
+                    alert('✅ Report saved as draft');
+                    setShowReportModal(false);
+                    setTeacherComments('');
+                  } catch (error) {
+                    alert('Failed to save: ' + error.message);
+                  }
+                }}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
+              >
+                Save Draft
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    await saveAndPublishReport();
+                    alert('✅ Report published! Visible to admin and staff.');
+                    setShowReportModal(false);
+                    setTeacherComments('');
+                  } catch (error) {
+                    alert('Failed to publish: ' + error.message);
+                  }
+                }}
+                className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-2"
+              >
+                <Send className="w-4 h-4" />
+                Publish Report
+              </button>
             </div>
           </div>
         </div>
