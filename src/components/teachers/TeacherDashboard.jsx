@@ -21,6 +21,7 @@ import TeacherReports from './TeacherReports';
 import TeacherTermReports from './TeacherTermReport';   // ✅ Fixed import path
 import TeacherAssignments from './TeacherAssignments';
 import PublishedReportsViewer from '../shared/PublishedReportsViewer';
+import TeacherTimetable from './TeacherTimetable';
 
 import { Sidebar } from '../dashboard/Sidebar';
 import { TopHeader } from '../dashboard/TopHeader';
@@ -331,6 +332,12 @@ const TeacherDashboard = ({ currentUser, courses, students }) => {
             teacherCourses={teacherCourses}
             enrolledStudentsByCourse={enrolledStudentsByCourse}
           />
+        )}
+        {renderTab('timetable',
+          <TeacherTimetable 
+           teacherId={teacherId}
+           teacherCourses={teacherCourses}
+         />
         )}
       </>
     );

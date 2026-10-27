@@ -46,6 +46,7 @@ import { StatsCard } from './dashboard/StatsCard';
 import { LoadingState } from './dashboard/LoadingState';
 import { EmptyState } from './dashboard/EmptyState';
 import CalendarView from './shared/CalendarView';
+import TimetableManagement from './admin/TimetableManagement';
 
 import StudentTermReports from './students/StudentTermReports';
 import PublishedReportsViewer from './shared/PublishedReportsViewer';
@@ -1047,6 +1048,7 @@ const AdminDashboard = ({ students, courses, announcements, applications, applic
             <EnrollmentManagement currentUser={currentUser} />
           </div>
         );  
+      case 'timetable': return <TimetableManagement />; 
       default:
         return renderDashboardOverview();
     }

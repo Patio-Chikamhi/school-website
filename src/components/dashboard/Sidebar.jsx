@@ -76,6 +76,7 @@ export const Sidebar = ({
 
   const adminNavItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Home },
+    { id: 'timetable', label: 'Timetable', icon: Calendar },
     { id: 'students', label: 'Students', icon: Users },
     { id: 'enrollment', label: 'Enrollment', icon: Users },
     { id: 'applications', label: 'Applications', icon: FileText },
@@ -87,6 +88,7 @@ export const Sidebar = ({
     { id: 'schoolReports', label: 'Class Reports', icon: FileSpreadsheet },
     { id: 'studentReports', label: 'Student Reports', icon: FileText },
     { id: 'allPublishedReports', label: 'All Published', icon: ClipboardCheck },
+
     { id: 'upload', label: 'Upload Media', icon: Upload },
     { id: 'contactMessages', label: 'Messages', icon: MessageSquare },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
@@ -120,6 +122,7 @@ export const Sidebar = ({
   // ✅ FIXED: Clear differentiation between the two report features
   const teacherNavItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Home },
+    { id: 'timetable', label: 'My Timetable', icon: Calendar },
     { id: 'courses', label: 'My Courses', icon: BookOpen },
     { id: 'students', label: 'My Students', icon: Users },
     { id: 'attendance', label: 'Attendance', icon: Calendar },
@@ -143,20 +146,20 @@ export const Sidebar = ({
   ];
 
   const navItems = userType === 'admin' ? adminNavItems :
-                   userType === 'student' ? studentNavItems :
-                   userType === 'teacher' ? teacherNavItems :
-                   userType === 'finance' ? financeNavItems :
-                   parentNavItems;
+    userType === 'student' ? studentNavItems :
+      userType === 'teacher' ? teacherNavItems :
+        userType === 'finance' ? financeNavItems :
+          parentNavItems;
 
   const handleLogout = async () => {
-  try {
-    await signOut(auth);
-    navigate('/login');
-  } catch (error) {
-    console.error('Logout error:', error);
-    navigate('/login');
-  }
-};
+    try {
+      await signOut(auth);
+      navigate('/login');
+    } catch (error) {
+      console.error('Logout error:', error);
+      navigate('/login');
+    }
+  };
 
   if (isMobile && !mobileOpen) {
     return null;
@@ -251,11 +254,10 @@ export const Sidebar = ({
               <button
                 key={item.id}
                 onClick={() => handleNavClick(item.id)}
-                className={`w-full flex items-center ${(!isMobile && collapsed) ? 'justify-center' : 'gap-3'} p-3 rounded-lg transition-all duration-200 ${
-                  activeSection === item.id
+                className={`w-full flex items-center ${(!isMobile && collapsed) ? 'justify-center' : 'gap-3'} p-3 rounded-lg transition-all duration-200 ${activeSection === item.id
                     ? 'bg-emerald-50 text-emerald-700 border-l-4 border-emerald-500'
                     : 'hover:bg-gray-50 text-gray-700'
-                }`}
+                  }`}
                 title={(!isMobile && collapsed) ? item.label : ''}
               >
                 <item.icon className="w-5 h-5 flex-shrink-0" />
